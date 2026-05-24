@@ -6,6 +6,7 @@ import os
 from datetime import date, timedelta
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .client import CronometerClient
 
@@ -21,6 +22,9 @@ mcp = FastMCP(
         "Use search_foods to find foods, get_food_details for nutrition info "
         "and serving sizes, add_food_entry to log meals, and get_food_log to "
         "review what was eaten."
+    ),
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False,
     ),
 )
 
