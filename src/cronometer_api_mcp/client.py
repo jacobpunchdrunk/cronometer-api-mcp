@@ -12,6 +12,7 @@ endpoints.
 import logging
 import os
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -219,10 +220,15 @@ class CronometerClient:
     # Date helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _format_day(d: date | None = None) -> str:
+    def _local_today(self) -> date:
+        """Return today's date in the configured local timezone."""
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(os.getenv("CRONOMETER_TIMEZONE", "UTC"))
+        return datetime.now(tz=tz).date()
+
+    def _format_day(self, d: date | None = None) -> str:
         """Format a date as Cronometer expects: non-zero-padded 'YYYY-M-D'."""
-        d = d or date.today()
+        d = d or self._local_today()
         return f"{d.year}-{d.month}-{d.day}"
 
     # ------------------------------------------------------------------
@@ -383,7 +389,8 @@ class CronometerClient:
 
         Returns the serving confirmation dict from the API.
         """
-        now = datetime.now()
+        _tz = ZoneInfo(os.getenv("CRONOMETER_TIMEZONE", "UTC"))
+        now = datetime.now(tz=_tz)
         day_str = self._format_day(day)
         time_str = f"{now.hour}:{now.minute}:{now.second}"
 
