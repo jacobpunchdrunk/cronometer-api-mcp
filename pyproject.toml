@@ -35,6 +35,7 @@ cronometer-api-mcp = "cronometer_api_mcp.server:main"
 [dependency-groups]
 dev = [
     "ruff>=0.8.0",
+    "pip-audit>=2.7.0",
 ]
 
 [tool.hatch.build.targets.wheel]

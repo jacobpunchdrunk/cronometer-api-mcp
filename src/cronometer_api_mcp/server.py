@@ -1,9 +1,13 @@
 """MCP server for Cronometer nutrition data via the mobile REST API."""
 
+import hmac
 import json
 import logging
 import os
+import time
 from datetime import date, timedelta
+from hashlib import sha256
+from html import escape as _html_escape
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -12,6 +16,18 @@ from .client import CronometerClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- OAuth / auth-gate tunables --------------------------------------------
+CODE_TTL_S = 5 * 60            # pending auth codes expire 5 minutes after issue
+MAX_AUTH_ATTEMPTS = 5          # failed approve-secret tries per IP per window
+AUTH_WINDOW_S = 60             # rate-limit window
+MAX_BODY_BYTES = 64 * 1024     # cap on OAuth request bodies (DoS guard)
+MAX_PENDING_CODES = 100        # backstop cap on the pending-code store
+
+
+def _safe_equal(a: str, b: str) -> bool:
+    """Constant-time string comparison (length-independent via fixed-size hash)."""
+    return hmac.compare_digest(sha256(a.encode()).digest(), sha256(b.encode()).digest())
 
 mcp = FastMCP(
     "cronometer",
@@ -693,15 +709,48 @@ class OAuthAuthorizationMiddleware:
         client_id: str,
         client_secret: str,
         access_token: str,
+        approve_secret: str,
         base_url: str = "",
     ):
         self.app = app
         self.client_id = client_id
         self.client_secret = client_secret
         self.access_token = access_token
+        self.approve_secret = approve_secret
         self.base_url = base_url.rstrip("/")
-        # In-memory store for pending auth codes: code -> {code_challenge, redirect_uri, state}
+        # In-memory store for pending auth codes: code -> {code_challenge, redirect_uri, state, created_at}
         self._pending_codes: dict[str, dict] = {}
+        # Per-IP failed approve-secret attempts: ip -> {count, reset_at}
+        self._auth_attempts: dict[str, dict] = {}
+
+    def _cleanup_expired(self) -> None:
+        """Lazy eviction of expired pending codes and stale rate-limit entries."""
+        now = time.monotonic()
+        for code in [
+            c for c, meta in self._pending_codes.items()
+            if now - meta.get("created_at", 0) > CODE_TTL_S
+        ]:
+            self._pending_codes.pop(code, None)
+        for ip in [
+            i for i, entry in self._auth_attempts.items()
+            if now > entry.get("reset_at", 0)
+        ]:
+            self._auth_attempts.pop(ip, None)
+
+    def _client_ip(self, scope, headers) -> str:
+        """Best-effort client IP, proxy-aware.
+
+        Railway's edge appends the real client IP as the LAST entry of
+        X-Forwarded-For. The left-most entries are client-supplied and
+        spoofable, so we deliberately take the last one. This assumes a
+        single trusted hop (Railway edge). If this ever runs behind an
+        additional proxy (e.g. Cloudflare -> Railway), this index must change.
+        """
+        xff = headers.get(b"x-forwarded-for", b"").decode()
+        if xff:
+            return xff.split(",")[-1].strip()
+        client = scope.get("client")
+        return client[0] if client else "unknown"
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -779,7 +828,7 @@ class OAuthAuthorizationMiddleware:
         # All other requests: validate bearer token
         headers = dict(scope.get("headers", []))
         auth_value = headers.get(b"authorization", b"").decode()
-        if auth_value != f"Bearer {self.access_token}":
+        if not _safe_equal(auth_value, f"Bearer {self.access_token}"):
             from starlette.responses import Response
 
             # Return 401 with WWW-Authenticate header per MCP spec
@@ -804,7 +853,13 @@ class OAuthAuthorizationMiddleware:
         """
         from starlette.responses import JSONResponse
 
-        body = await self._read_body(receive)
+        try:
+            body = await self._read_body(receive)
+        except ValueError:
+            from starlette.responses import Response
+
+            await Response("Request body too large", status_code=413)(scope, receive, send)
+            return
         try:
             import json as _json
 
@@ -812,10 +867,13 @@ class OAuthAuthorizationMiddleware:
         except Exception:
             data = {}
 
+        # Per RFC 7591: do NOT echo the client_secret back. client_secret_expires_at=0
+        # signals a non-expiring secret already known to the client. This avoids
+        # handing credentials to any anonymous caller of /register.
         response = JSONResponse(
             {
                 "client_id": self.client_id,
-                "client_secret": self.client_secret,
+                "client_secret_expires_at": 0,
                 "client_name": data.get("client_name", "mcp-client"),
                 "redirect_uris": data.get("redirect_uris", []),
                 "grant_types": ["authorization_code"],
@@ -826,8 +884,60 @@ class OAuthAuthorizationMiddleware:
         )
         await response(scope, receive, send)
 
+    def _render_approve_page(
+        self,
+        *,
+        client_id,
+        redirect_uri,
+        code_challenge,
+        code_challenge_method,
+        state,
+        error: str = "",
+    ) -> str:
+        """Render the approval page. Shared by GET and failed/throttled POST."""
+        e = _html_escape
+        err_html = f'<p class="err">{e(error)}</p>' if error else ""
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorize MCP Access</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {{ font-family: system-ui, sans-serif; max-width: 480px; margin: 60px auto; padding: 20px; }}
+        h1 {{ font-size: 1.4em; }}
+        .info {{ background: #f0f4f8; padding: 16px; border-radius: 8px; margin: 20px 0; }}
+        .err {{ color: #b91c1c; font-weight: 600; margin: 8px 0; }}
+        label {{ display: block; margin: 16px 0 6px; font-weight: 600; }}
+        input[type=password] {{ width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box;
+                                border: 1px solid #cbd5e1; border-radius: 6px; }}
+        button {{ background: #2563eb; color: white; border: none; padding: 12px 32px;
+                 border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 16px; }}
+        button:hover {{ background: #1d4ed8; }}
+    </style>
+</head>
+<body>
+    <h1>Authorize Cronometer MCP</h1>
+    <div class="info">
+        <p><strong>Client:</strong> {e(client_id) or "unknown"}</p>
+        <p>Enter the access secret to grant this client access to your
+           Cronometer nutrition data.</p>
+    </div>
+    {err_html}
+    <form method="POST" action="/authorize">
+        <input type="hidden" name="client_id" value="{e(client_id)}">
+        <input type="hidden" name="redirect_uri" value="{e(redirect_uri)}">
+        <input type="hidden" name="code_challenge" value="{e(code_challenge)}">
+        <input type="hidden" name="code_challenge_method" value="{e(code_challenge_method)}">
+        <input type="hidden" name="state" value="{e(state)}">
+        <label for="approve_secret">Access secret</label>
+        <input id="approve_secret" type="password" name="approve_secret" autocomplete="off" autofocus required>
+        <button type="submit">Authorize</button>
+    </form>
+</body>
+</html>"""
+
     async def _handle_authorize(self, scope, receive, send):
-        """Handle GET /authorize -- show a simple approval page."""
+        """Handle GET /authorize -- show the approval page (secret entered on POST)."""
         from starlette.responses import HTMLResponse
         from urllib.parse import parse_qs
 
@@ -848,68 +958,102 @@ class OAuthAuthorizationMiddleware:
             await response(scope, receive, send)
             return
 
-        # Render a simple approval page
-        html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>Authorize MCP Access</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body {{ font-family: system-ui, sans-serif; max-width: 480px; margin: 60px auto; padding: 20px; }}
-        h1 {{ font-size: 1.4em; }}
-        .info {{ background: #f0f4f8; padding: 16px; border-radius: 8px; margin: 20px 0; }}
-        button {{ background: #2563eb; color: white; border: none; padding: 12px 32px;
-                 border-radius: 6px; font-size: 16px; cursor: pointer; }}
-        button:hover {{ background: #1d4ed8; }}
-    </style>
-</head>
-<body>
-    <h1>Authorize Cronometer MCP</h1>
-    <div class="info">
-        <p><strong>Client:</strong> {client_id or "unknown"}</p>
-        <p>This will grant access to your Cronometer nutrition data
-           through the MCP protocol.</p>
-    </div>
-    <form method="POST" action="/authorize">
-        <input type="hidden" name="client_id" value="{client_id or ""}">
-        <input type="hidden" name="redirect_uri" value="{redirect_uri or ""}">
-        <input type="hidden" name="code_challenge" value="{code_challenge or ""}">
-        <input type="hidden" name="code_challenge_method" value="{code_challenge_method or ""}">
-        <input type="hidden" name="state" value="{state or ""}">
-        <button type="submit">Authorize</button>
-    </form>
-</body>
-</html>"""
+        html = self._render_approve_page(
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_challenge=code_challenge,
+            code_challenge_method=code_challenge_method,
+            state=state,
+        )
         response = HTMLResponse(html)
         await response(scope, receive, send)
 
     async def _handle_authorize_submit(self, scope, receive, send):
-        """Handle POST /authorize -- user approved, generate code and redirect."""
-        from starlette.responses import RedirectResponse
+        """Handle POST /authorize -- validate the approve secret, then issue a code."""
+        from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
         from urllib.parse import parse_qs, urlencode
         import secrets
 
-        body = await self._read_body(receive)
+        try:
+            body = await self._read_body(receive)
+        except ValueError:
+            from starlette.responses import Response
+
+            await Response("Request body too large", status_code=413)(scope, receive, send)
+            return
         params = parse_qs(body.decode("utf-8"))
 
         redirect_uri = params.get("redirect_uri", [None])[0]
         code_challenge = params.get("code_challenge", [None])[0]
         code_challenge_method = params.get("code_challenge_method", [None])[0]
         state = params.get("state", [None])[0]
+        client_id = params.get("client_id", [None])[0]
+        approve_secret = params.get("approve_secret", [None])[0]
 
         if not redirect_uri or not code_challenge:
-            from starlette.responses import JSONResponse
-
             response = JSONResponse({"error": "invalid_request"}, status_code=400)
             await response(scope, receive, send)
             return
 
-        # Generate a one-time auth code
+        self._cleanup_expired()
+
+        headers = dict(scope.get("headers", []))
+        ip = self._client_ip(scope, headers)
+        now = time.monotonic()
+
+        # Brute-force throttle: block before checking the secret.
+        entry = self._auth_attempts.get(ip)
+        if entry and now < entry["reset_at"] and entry["count"] >= MAX_AUTH_ATTEMPTS:
+            html = self._render_approve_page(
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                code_challenge=code_challenge,
+                code_challenge_method=code_challenge_method,
+                state=state,
+                error="Too many attempts. Wait a minute and try again.",
+            )
+            await HTMLResponse(html, status_code=429)(scope, receive, send)
+            return
+
+        # Validate the approve secret (constant-time).
+        if not approve_secret or not _safe_equal(approve_secret, self.approve_secret):
+            e = self._auth_attempts.get(ip)
+            if not e or now > e["reset_at"]:
+                self._auth_attempts[ip] = {"count": 1, "reset_at": now + AUTH_WINDOW_S}
+            else:
+                e["count"] += 1
+            html = self._render_approve_page(
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                code_challenge=code_challenge,
+                code_challenge_method=code_challenge_method,
+                state=state,
+                error="Incorrect secret. Try again.",
+            )
+            await HTMLResponse(html, status_code=403)(scope, receive, send)
+            return
+
+        # Success -- clear any failed-attempt record for this IP.
+        self._auth_attempts.pop(ip, None)
+
+        # Backstop cap on the pending-code store.
+        if len(self._pending_codes) >= MAX_PENDING_CODES:
+            self._cleanup_expired()
+            if len(self._pending_codes) >= MAX_PENDING_CODES:
+                await JSONResponse(
+                    {"error": "server_error",
+                     "error_description": "Too many pending authorizations"},
+                    status_code=503,
+                )(scope, receive, send)
+                return
+
+        # Generate a one-time auth code with a creation timestamp (TTL enforced at /token).
         code = secrets.token_urlsafe(32)
         self._pending_codes[code] = {
             "code_challenge": code_challenge,
             "code_challenge_method": code_challenge_method or "S256",
             "redirect_uri": redirect_uri,
+            "created_at": now,
         }
 
         # Redirect back to Claude.ai with the code
@@ -929,7 +1073,13 @@ class OAuthAuthorizationMiddleware:
         import hashlib
         import base64
 
-        body = await self._read_body(receive)
+        try:
+            body = await self._read_body(receive)
+        except ValueError:
+            from starlette.responses import Response
+
+            await Response("Request body too large", status_code=413)(scope, receive, send)
+            return
         try:
             params = parse_qs(body.decode("utf-8"))
         except Exception:
@@ -957,6 +1107,15 @@ class OAuthAuthorizationMiddleware:
         pending = self._pending_codes.pop(code, None)
         if pending is None:
             response = JSONResponse({"error": "invalid_grant"}, status_code=400)
+            await response(scope, receive, send)
+            return
+
+        # Reject expired codes (TTL enforced here since codes are consumed on use).
+        if time.monotonic() - pending.get("created_at", 0) > CODE_TTL_S:
+            response = JSONResponse(
+                {"error": "invalid_grant", "error_description": "Code expired"},
+                status_code=400,
+            )
             await response(scope, receive, send)
             return
 
@@ -990,11 +1149,13 @@ class OAuthAuthorizationMiddleware:
 
     @staticmethod
     async def _read_body(receive) -> bytes:
-        """Read the full request body from ASGI receive."""
+        """Read the full request body from ASGI receive, capped at MAX_BODY_BYTES."""
         body = b""
         while True:
             message = await receive()
             body += message.get("body", b"")
+            if len(body) > MAX_BODY_BYTES:
+                raise ValueError("Request body too large")
             if not message.get("more_body", False):
                 break
         return body
@@ -1035,19 +1196,37 @@ def main():
         client_id = os.getenv("MCP_OAUTH_CLIENT_ID", "")
         client_secret = os.getenv("MCP_OAUTH_CLIENT_SECRET", "")
         access_token = os.getenv("MCP_AUTH_TOKEN")
+        approve_secret = os.getenv("MCP_APPROVE_SECRET")
         base_url = os.getenv("MCP_BASE_URL", f"http://localhost:{port}")
 
-        if access_token:
-            logger.info("OAuth authorization code flow enabled")
-            app = OAuthAuthorizationMiddleware(
-                app,
-                client_id=client_id,
-                client_secret=client_secret,
-                access_token=access_token,
-                base_url=base_url,
+        # Fail closed: a public remote transport must be authenticated. Refuse to
+        # start rather than silently serving every tool unauthenticated.
+        if not access_token or not approve_secret:
+            raise RuntimeError(
+                "Remote transport requires MCP_AUTH_TOKEN and MCP_APPROVE_SECRET. "
+                "Refusing to start unauthenticated."
             )
-        else:
-            logger.warning("No auth configured -- server is unauthenticated")
+        if len(approve_secret) < 16:
+            raise RuntimeError(
+                "MCP_APPROVE_SECRET too short (min 16 chars). Generate: openssl rand -hex 32"
+            )
+        if not base_url.startswith("https://"):
+            logger.warning(
+                "MCP_BASE_URL is not HTTPS (%s). OAuth metadata will advertise "
+                "insecure endpoints. Set MCP_BASE_URL to your public HTTPS URL "
+                "for production.",
+                base_url,
+            )
+
+        logger.info("OAuth authorization code flow enabled")
+        app = OAuthAuthorizationMiddleware(
+            app,
+            client_id=client_id,
+            client_secret=client_secret,
+            access_token=access_token,
+            approve_secret=approve_secret,
+            base_url=base_url,
+        )
 
         logger.info("Starting %s transport on %s:%d", transport, host, port)
         config = uvicorn.Config(app, host=host, port=port, log_level="info")

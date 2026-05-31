@@ -12,6 +12,19 @@
 #
 # Base image: supercorp/supergateway:uvx (Alpine + Node 20 + uv).
 # We install Python 3.14 via uv (cronometer-api-mcp requires >=3.14).
+#
+# ⚠️  SECURITY WARNING — READ BEFORE EXPOSING THIS IMAGE PUBLICLY
+# This entrypoint runs the MCP in STDIO mode under supergateway. In stdio mode
+# the app NEVER applies OAuthAuthorizationMiddleware (that code path only runs
+# when MCP_TRANSPORT=streamable-http or sse). So this image, as built, exposes
+# every MCP tool with NO authentication. Do NOT expose this container directly
+# to the public internet. Either:
+#   (a) run it only behind an authenticating reverse proxy / private network
+#       (Caddy basicauth, Cloudflare Access, Tailscale, etc.), or
+#   (b) deploy using the native transport instead (MCP_TRANSPORT=streamable-http
+#       with MCP_AUTH_TOKEN and MCP_APPROVE_SECRET set), which engages the
+#       built-in OAuth approve-secret gate. The native path is what the
+#       hosted Railway deployment uses.
 
 FROM supercorp/supergateway:uvx
 

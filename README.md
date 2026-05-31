@@ -126,11 +126,14 @@ The server supports remote deployment with OAuth 2.1 authorization (PKCE) for us
 | `CRONOMETER_USERNAME` | Yes | Cronometer account email |
 | `CRONOMETER_PASSWORD` | Yes | Cronometer account password |
 | `MCP_TRANSPORT` | No | Transport mode: `stdio` (default), `sse`, or `streamable-http` |
-| `MCP_AUTH_TOKEN` | No | Bearer token for remote auth (enables OAuth flow) |
+| `MCP_AUTH_TOKEN` | Remote | Bearer token gating the MCP endpoint (header only). **Required** for `sse`/`streamable-http`. |
+| `MCP_APPROVE_SECRET` | Remote | Secret entered once in the browser approve page. **Required** for `sse`/`streamable-http` (min 16 chars). Keep distinct from `MCP_AUTH_TOKEN`. |
 | `MCP_OAUTH_CLIENT_ID` | No | OAuth client ID for remote clients |
 | `MCP_OAUTH_CLIENT_SECRET` | No | OAuth client secret for remote clients |
-| `MCP_BASE_URL` | No | Public base URL for OAuth metadata endpoints |
+| `MCP_BASE_URL` | No | Public base URL for OAuth metadata endpoints (should be `https://`) |
 | `PORT` | No | Listen port for remote transports (default 8000) |
+
+> **Remote transports fail closed.** When `MCP_TRANSPORT` is `sse` or `streamable-http`, the server refuses to start unless both `MCP_AUTH_TOKEN` and `MCP_APPROVE_SECRET` are set. The approve page is gated by `MCP_APPROVE_SECRET` (with per-IP rate limiting and a 5-minute auth-code TTL) so the OAuth flow cannot be used by an anonymous caller to mint the bearer token.
 
 ### Dokku / Heroku Deployment
 
@@ -144,6 +147,7 @@ dokku apps:create cronometer-api-mcp
 dokku config:set cronometer-api-mcp \
   MCP_TRANSPORT=streamable-http \
   MCP_AUTH_TOKEN=$(openssl rand -hex 32) \
+  MCP_APPROVE_SECRET=$(openssl rand -hex 32) \
   MCP_OAUTH_CLIENT_ID=my-client \
   MCP_OAUTH_CLIENT_SECRET=$(openssl rand -hex 32) \
   MCP_BASE_URL=https://your-domain.com \
@@ -162,7 +166,13 @@ When deployed remotely with OAuth configured, connect from Claude.ai using:
 - **OAuth Client ID**: Value of `MCP_OAUTH_CLIENT_ID`
 - **OAuth Client Secret**: Value of `MCP_OAUTH_CLIENT_SECRET`
 
-Claude.ai will open a browser tab for authorization. Click **Authorize** to complete the connection.
+Claude.ai will open a browser tab for authorization. The page prompts for the **access secret** -- enter the value of `MCP_APPROVE_SECRET` to complete the connection. You do this once on first connect (and again on any later re-auth).
+
+### ⚠️ Docker security
+
+The published Docker image wraps the server with supergateway in **stdio** mode. In stdio mode the OAuth approve-secret gate is **not** applied -- the image exposes every tool with no authentication. Do **not** expose the Docker container directly to the public internet.
+
+For authenticated remote access, deploy using the native transport (`MCP_TRANSPORT=streamable-http` with `MCP_AUTH_TOKEN` and `MCP_APPROVE_SECRET` set), which engages the built-in OAuth gate. If you must run the Docker image with public exposure, place it behind an authenticating reverse proxy (Caddy basicauth, Cloudflare Access, Tailscale, etc.).
 
 ## Development
 

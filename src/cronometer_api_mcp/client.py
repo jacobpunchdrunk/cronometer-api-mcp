@@ -115,9 +115,9 @@ class CronometerClient:
         self._user_id = data["id"]
         self._token = data["sessionKey"]
         logger.info(
-            "Cronometer login successful (userId=%d, token=%s...)",
+            "Cronometer login successful (userId=%d, token_len=%d)",
             self._user_id,
-            self._token[:8] if self._token else "???",
+            len(self._token) if self._token else 0,
         )
 
     def _ensure_auth(self) -> None:
@@ -544,7 +544,7 @@ class CronometerClient:
         """
         from datetime import timedelta
 
-        to_day = to_day or date.today()
+        to_day = to_day or self._local_today()
         from_day = from_day or (to_day - timedelta(days=1))
 
         payload = {
@@ -666,7 +666,7 @@ class CronometerClient:
         """
         from datetime import timedelta
 
-        end = end or date.today()
+        end = end or self._local_today()
         start = start or (end - timedelta(days=30))
 
         payload = {
