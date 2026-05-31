@@ -895,7 +895,8 @@ class OAuthAuthorizationMiddleware:
         error: str = "",
     ) -> str:
         """Render the approval page. Shared by GET and failed/throttled POST."""
-        e = _html_escape
+        def e(v):
+            return _html_escape(v if v is not None else "")
         err_html = f'<p class="err">{e(error)}</p>' if error else ""
         return f"""<!DOCTYPE html>
 <html>

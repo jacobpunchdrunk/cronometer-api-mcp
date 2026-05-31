@@ -64,12 +64,147 @@ Procfile
 pyproject.toml
 README.md
 repomix.config.json
+SECURITY-REVIEW-RESPONSE.md
 SECURITY-REVIEW.md
 server.json
 </directory_structure>
 
 <files>
 This section contains the contents of the repository's files.
+
+<file path=".github/workflows/docker.yml">
+ 1: name: Build Docker image
+ 2: 
+ 3: on:
+ 4:   push:
+ 5:     branches: [main]
+ 6:   release:
+ 7:     types: [published]
+ 8: 
+ 9: concurrency:
+10:   group: docker-${{ github.ref }}
+11:   cancel-in-progress: true
+12: 
+13: jobs:
+14:   build:
+15:     runs-on: ubuntu-latest
+16:     permissions:
+17:       contents: read
+18:       packages: write
+19:       # Required for build provenance attestation
+20:       id-token: write
+21:       attestations: write
+22: 
+23:     steps:
+24:       - uses: actions/checkout@v4
+25: 
+26:       - name: Set up QEMU
+27:         uses: docker/setup-qemu-action@v3
+28: 
+29:       - name: Set up Docker Buildx
+30:         uses: docker/setup-buildx-action@v3
+31: 
+32:       - name: Log in to GHCR
+33:         uses: docker/login-action@v3
+34:         with:
+35:           registry: ghcr.io
+36:           username: ${{ github.actor }}
+37:           password: ${{ secrets.GITHUB_TOKEN }}
+38: 
+39:       - name: Compute image metadata
+40:         id: meta
+41:         uses: docker/metadata-action@v5
+42:         with:
+43:           images: ghcr.io/${{ github.repository }}
+44:           tags: |
+45:             type=semver,pattern={{version}}
+46:             type=semver,pattern={{major}}.{{minor}}
+47:             type=raw,value=latest,enable={{is_default_branch}}
+48: 
+49:       - name: Build and push
+50:         id: build
+51:         uses: docker/build-push-action@v5
+52:         with:
+53:           context: .
+54:           platforms: linux/amd64,linux/arm64
+55:           push: true
+56:           tags: ${{ steps.meta.outputs.tags }}
+57:           labels: ${{ steps.meta.outputs.labels }}
+58:           cache-from: type=gha
+59:           cache-to: type=gha,mode=max
+60: 
+61:       - name: Generate build provenance attestation
+62:         uses: actions/attest-build-provenance@v1
+63:         with:
+64:           subject-name: ghcr.io/${{ github.repository }}
+65:           subject-digest: ${{ steps.build.outputs.digest }}
+66:           push-to-registry: true
+</file>
+
+<file path="src/cronometer_api_mcp/__init__.py">
+1: """Cronometer MCP server using the mobile REST API."""
+2: 
+3: from .client import CronometerClient, CronometerError
+4: 
+5: __all__ = ["CronometerClient", "CronometerError"]
+</file>
+
+<file path=".dockerignore">
+ 1: # Exclude noise from the build context
+ 2: .git
+ 3: .gitignore
+ 4: __pycache__
+ 5: *.pyc
+ 6: .venv
+ 7: venv
+ 8: .pytest_cache
+ 9: .ruff_cache
+10: dist
+11: build
+12: *.egg-info
+13: flows
+14: *.md
+15: !README.md
+16: Procfile
+17: opencode.json
+18: server.json
+19: skills-lock.json
+20: session-*.md
+21: Dockerfile
+22: .dockerignore
+</file>
+
+<file path=".python-version">
+1: 3.14
+</file>
+
+<file path="LICENSE">
+ 1: MIT License
+ 2: 
+ 3: Copyright (c) 2026 Randy Westergren
+ 4: 
+ 5: Permission is hereby granted, free of charge, to any person obtaining a copy
+ 6: of this software and associated documentation files (the "Software"), to deal
+ 7: in the Software without restriction, including without limitation the rights
+ 8: to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ 9: copies of the Software, and to permit persons to whom the Software is
+10: furnished to do so, subject to the following conditions:
+11: 
+12: The above copyright notice and this permission notice shall be included in all
+13: copies or substantial portions of the Software.
+14: 
+15: THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+16: IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+17: FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+18: AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+19: LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+20: OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+21: SOFTWARE.
+</file>
+
+<file path="Procfile">
+1: web: cronometer-api-mcp
+</file>
 
 <file path="repomix.config.json">
  1: {
@@ -117,6 +252,436 @@ This section contains the contents of the repository's files.
 43:     "encoding": "o200k_base"
 44:   }
 45: }
+</file>
+
+<file path="SECURITY-REVIEW-RESPONSE.md">
+  1: # Security Review Response — cronometer-api-mcp
+  2: 
+  3: **Status:** Review complete. This document responds to the DRAFT `SECURITY-REVIEW.md` prepared by Opus 4.8. The original plan is strong and should be implemented as-is, with the additions below folded in before or during implementation.
+  4: 
+  5: **Reviewer:** Claude (Opus 4.6), reviewing the full repomix codebase against the audit.
+  6: 
+  7: **Scope:** Everything in the repo — `server.py`, `client.py`, `Dockerfile`, CI workflows, `pyproject.toml`, `README.md`, `.env.example`, `server.json`. The original audit scoped to `server.py` + env/docs; this response extends the surface where warranted.
+  8: 
+  9: ---
+ 10: 
+ 11: ## 1. Verdict on the original plan
+ 12: 
+ 13: The original SECURITY-REVIEW.md is comprehensive for its stated scope. All seven findings (§3.1–§3.7) are accurate, correctly severity-ranked, and the proposed remediation (§6 Steps 0–8, §7 code changes) is ready to implement. The verification plan (§8) is thorough. No changes needed to any of the existing findings or proposed code.
+ 14: 
+ 15: **Implement the original plan as written**, then layer in the additions below.
+ 16: 
+ 17: ---
+ 18: 
+ 19: ## 2. Decisions on §10
+ 20: 
+ 21: These are the five decision points the original audit left for the reviewer:
+ 22: 
+ 23: 1. **Separate `MCP_APPROVE_SECRET` from `MCP_AUTH_TOKEN`** — **Confirmed.** Correct separation of browser-form-exposure risk vs. header-only risk, consistent with the Basecamp fix.
+ 24: 
+ 25: 2. **Fail-closed for remote transports (§3.2 / Step 3)** — **Confirmed.** Remove the unauthenticated fallback entirely. It's a foot-gun.
+ 26: 
+ 27: 3. **`X-Forwarded-For` last-entry parsing for Railway** — **Confirmed.** Railway uses a single-hop edge proxy, so last-entry is correct. Add an explicit code comment documenting the one-hop assumption, and note that if the server ever moves behind a multi-hop chain (e.g., Cloudflare → Railway), the index needs adjustment.
+ 28: 
+ 29: 4. **Scope limited to `server.py` + env/docs, `client.py` and tools untouched** — **Confirmed with exceptions.** Two `client.py` bugs should be fixed as drive-bys (see §3 ADD-8 below), and the Dockerfile deployment path needs attention (see §3 ADD-1). Tool definitions are fine as-is.
+ 30: 
+ 31: 5. **DNS-rebinding protection (§3.7) — now or defer?** — **Defer.** The approve-secret gate is the higher-priority fix. Re-enable DNS-rebinding protection after the auth hardening is deployed and verified stable.
+ 32: 
+ 33: ---
+ 34: 
+ 35: ## 3. Additional findings (not in the original audit)
+ 36: 
+ 37: These are ordered by priority. The implementing agent should fold these into the remediation plan alongside the original Steps 0–8.
+ 38: 
+ 39: ---
+ 40: 
+ 41: ### ADD-1: HIGH — Docker/supergateway deployment path is completely unauthenticated
+ 42: 
+ 43: **This is the biggest gap in the original audit.**
+ 44: 
+ 45: The Dockerfile entrypoint runs:
+ 46: 
+ 47: ```
+ 48: exec supergateway \
+ 49:   --stdio 'cronometer-api-mcp' \
+ 50:   --outputTransport streamableHttp \
+ 51:   --stateful \
+ 52:   --streamableHttpPath /mcp \
+ 53:   ...
+ 54: ```
+ 55: 
+ 56: When deployed via Docker, `main()` runs in **stdio mode** — which means it never enters the `sse`/`streamable-http` branch, the `OAuthAuthorizationMiddleware` is never applied, and supergateway proxies raw MCP calls with **zero authentication**. Anyone who can reach the container can call every tool.
+ 57: 
+ 58: The Docker image is published to GHCR on every push to `main` and on every release (`docker.yml`). This is the image anyone pulling from the container registry would use. The fail-closed fix in Step 3 only protects the native remote transport path — it does nothing for the Docker path.
+ 59: 
+ 60: **Remediation options (pick one):**
+ 61: 
+ 62: - **Option A (recommended):** Add auth documentation to the Dockerfile/README stating that the Docker image is intended for use behind an authenticating reverse proxy (e.g., Caddy with basicauth, Cloudflare Access, Tailscale). Add a prominent `## Security Warning` section to the README's Docker deployment instructions.
+ 63: - **Option B:** Change the Dockerfile to run `cronometer-api-mcp` in native `streamable-http` mode (bypassing supergateway), which would engage the OAuth middleware. This changes the deployment architecture.
+ 64: - **Option C:** Add supergateway-level auth (if supergateway supports it — check its docs for `--auth` or similar flags).
+ 65: 
+ 66: At minimum, Option A is required. The implementing agent should add the warning regardless of which option is chosen.
+ 67: 
+ 68: **Proposed README addition (for Option A):**
+ 69: 
+ 70: ```markdown
+ 71: ### ⚠️ Docker Security
+ 72: 
+ 73: The Docker image exposes MCP tools via supergateway with **no built-in authentication**.
+ 74: It is designed to run behind an authenticating reverse proxy or within a private network.
+ 75: 
+ 76: **Do NOT expose the Docker container directly to the public internet.**
+ 77: 
+ 78: If you need authenticated remote access, deploy using the native transport
+ 79: (`MCP_TRANSPORT=streamable-http`) with `MCP_AUTH_TOKEN` and `MCP_APPROVE_SECRET`,
+ 80: or place the Docker container behind an auth proxy (Caddy basicauth, Cloudflare
+ 81: Access, Tailscale, etc.).
+ 82: ```
+ 83: 
+ 84: ---
+ 85: 
+ 86: ### ADD-2: MEDIUM — `_read_body` has no size limit (memory exhaustion DoS)
+ 87: 
+ 88: The `_read_body` static method reads the entire request body into memory with no cap:
+ 89: 
+ 90: ```python
+ 91: @staticmethod
+ 92: async def _read_body(receive) -> bytes:
+ 93:     body = b""
+ 94:     while True:
+ 95:         message = await receive()
+ 96:         body += message.get("body", b"")
+ 97:         if not message.get("more_body", False):
+ 98:             break
+ 99:     return body
+100: ```
+101: 
+102: An attacker can POST a multi-GB body to `/authorize`, `/token`, or `/register` and exhaust server memory. All three endpoints call `_read_body`.
+103: 
+104: **Remediation:** Add a size cap and return 413 if exceeded. 64KB is generous for OAuth form bodies.
+105: 
+106: **Proposed code change:**
+107: 
+108: ```python
+109: MAX_BODY_BYTES = 64 * 1024  # 64 KB — generous for OAuth form posts
+110: 
+111: @staticmethod
+112: async def _read_body(receive) -> bytes:
+113:     """Read the full request body from ASGI receive, with size limit."""
+114:     body = b""
+115:     while True:
+116:         message = await receive()
+117:         body += message.get("body", b"")
+118:         if len(body) > MAX_BODY_BYTES:
+119:             raise ValueError("Request body too large")
+120:         if not message.get("more_body", False):
+121:             break
+122:     return body
+123: ```
+124: 
+125: Then in each handler that calls `_read_body`, catch `ValueError` and return a 413:
+126: 
+127: ```python
+128: try:
+129:     body = await self._read_body(receive)
+130: except ValueError:
+131:     from starlette.responses import Response
+132:     await Response("Request body too large", status_code=413)(scope, receive, send)
+133:     return
+134: ```
+135: 
+136: Add `MAX_BODY_BYTES` as a module-level constant alongside `CODE_TTL_S`, `MAX_AUTH_ATTEMPTS`, and `AUTH_WINDOW_S`.
+137: 
+138: ---
+139: 
+140: ### ADD-3: MEDIUM — `_pending_codes` and `_auth_attempts` grow unboundedly
+141: 
+142: The original audit proposes TTL on codes (Step 4) and a per-IP rate-limit dict (Step 6), but neither dict is ever pruned of expired entries:
+143: 
+144: - **`_pending_codes`:** Expired codes (past `CODE_TTL_S`) sit in the dict until consumed or process restart. Under sustained attack, an attacker who knows the approve-secret could fill memory with pending codes.
+145: - **`_auth_attempts`:** Entries past their `reset_at` window are never removed. Under distributed attack from many IPs, this dict grows without bound.
+146: 
+147: **Remediation:** Add lazy eviction. On each request that touches either dict, sweep entries that are past their expiry. Add a hard cap on dict size as a backstop.
+148: 
+149: **Proposed code — add a cleanup method to the middleware class:**
+150: 
+151: ```python
+152: MAX_PENDING_CODES = 100
+153: MAX_AUTH_ATTEMPT_ENTRIES = 10_000
+154: 
+155: def _cleanup_expired(self):
+156:     """Lazy eviction of expired pending codes and stale rate-limit entries."""
+157:     now = time.monotonic()
+158: 
+159:     # Evict expired auth codes
+160:     expired_codes = [
+161:         code for code, meta in self._pending_codes.items()
+162:         if now - meta.get("created_at", 0) > CODE_TTL_S
+163:     ]
+164:     for code in expired_codes:
+165:         self._pending_codes.pop(code, None)
+166: 
+167:     # Evict expired rate-limit entries
+168:     expired_ips = [
+169:         ip for ip, entry in self._auth_attempts.items()
+170:         if now > entry["reset_at"]
+171:     ]
+172:     for ip in expired_ips:
+173:         self._auth_attempts.pop(ip, None)
+174: ```
+175: 
+176: Call `self._cleanup_expired()` at the top of `_handle_authorize_submit` and `_handle_token`.
+177: 
+178: Additionally, in `_handle_authorize_submit`, after the approve-secret passes but before storing the code, check the dict size:
+179: 
+180: ```python
+181: if len(self._pending_codes) >= MAX_PENDING_CODES:
+182:     self._cleanup_expired()  # try once more
+183:     if len(self._pending_codes) >= MAX_PENDING_CODES:
+184:         await JSONResponse(
+185:             {"error": "server_error", "error_description": "Too many pending authorizations"},
+186:             status_code=503,
+187:         )(scope, receive, send)
+188:         return
+189: ```
+190: 
+191: ---
+192: 
+193: ### ADD-4: LOW — `_html_escape` omits single-quote; use `html.escape` from stdlib
+194: 
+195: The proposed custom `_html_escape` function handles `&`, `<`, `>`, `"` but not `'` (single quote). The proposed HTML template uses double-quoted attributes, so this is safe *for this specific template*, but it's fragile — any future template edit using single-quoted attributes would reopen the vector.
+196: 
+197: Python's standard library has `html.escape(s, quote=True)` which handles all five characters and is battle-tested.
+198: 
+199: **Remediation:** Replace the custom function with the stdlib:
+200: 
+201: ```python
+202: from html import escape as _html_escape
+203: ```
+204: 
+205: Then use `_html_escape(value)` everywhere (it escapes `&`, `<`, `>`, `"`, `'` by default). Drop the custom `_html_escape` function entirely.
+206: 
+207: ---
+208: 
+209: ### ADD-5: LOW — `/register` leaks `client_id` and `client_secret` to any anonymous caller
+210: 
+211: Post-fix, the approve-secret gates code issuance, so leaking client credentials via `/register` isn't directly exploitable for token minting. But the endpoint still hands `self.client_id` and `self.client_secret` to any unauthenticated POST request. These credentials might be reused elsewhere, and leaking them is unnecessary exposure.
+212: 
+213: **Remediation (pick one):**
+214: 
+215: - **Option A (minimal):** Stop echoing back `client_secret` in the `/register` response. Change the response to return `"client_secret_expires_at": 0` (per RFC 7591, indicating a non-expiring secret that was already known to the client) instead of the actual secret value.
+216: - **Option B:** Rate-limit `/register` the same way `/authorize` is rate-limited.
+217: - **Option C:** Gate `/register` behind the approve-secret (strictest, but may break the Claude connector flow if it expects unauthenticated registration).
+218: 
+219: **Recommended: Option A.** Least risk of breaking the connector flow.
+220: 
+221: ```python
+222: async def _handle_register(self, scope, receive, send):
+223:     # ... existing body parsing ...
+224:     response = JSONResponse(
+225:         {
+226:             "client_id": self.client_id,
+227:             "client_secret_expires_at": 0,   # secret known to client, not echoed
+228:             "client_name": data.get("client_name", "mcp-client"),
+229:             "redirect_uris": data.get("redirect_uris", []),
+230:             "grant_types": ["authorization_code"],
+231:             "response_types": ["code"],
+232:             "token_endpoint_auth_method": "client_secret_post",
+233:         },
+234:         status_code=201,
+235:     )
+236:     await response(scope, receive, send)
+237: ```
+238: 
+239: **Important caveat:** Test this change against the Claude connector flow before shipping. If Claude's connector expects `client_secret` in the registration response to complete the OAuth handshake, this change will break the flow. In that case, fall back to Option B (rate-limit only).
+240: 
+241: ---
+242: 
+243: ### ADD-6: LOW — No `redirect_uri` validation (open redirect with code in URL)
+244: 
+245: `_handle_authorize_submit` accepts any `redirect_uri` and redirects to it with the auth code appended as a query parameter. Post-fix, the approve-secret gates this, but if someone obtains the approve-secret (shoulder-surfing, log leak, shared credentials), they could set `redirect_uri` to an attacker-controlled domain.
+246: 
+247: PKCE prevents the attacker from exchanging the code without the verifier, but the code still appears in:
+248: - The attacker's server access logs
+249: - Browser history
+250: - Potentially `Referer` headers on the redirect target
+251: 
+252: **Remediation:** Validate `redirect_uri` against the value provided during `/register`, or against a hardcoded allowlist. For a single-user server, the simplest approach is to accept only URIs matching known Claude connector callback patterns.
+253: 
+254: **This is a "nice to have" given PKCE protection. Implement if time permits; do not block the main fix on this.**
+255: 
+256: ---
+257: 
+258: ### ADD-7: LOW — Cronometer session token partially logged
+259: 
+260: `client.py` lines 118–120 log the first 8 characters of the Cronometer session token:
+261: 
+262: ```python
+263: logger.info(
+264:     "Cronometer login successful (userId=%d, token=%s...)",
+265:     self._user_id,
+266:     self._token[:8] if self._token else "???",
+267: )
+268: ```
+269: 
+270: If logs are accessible (Railway log viewer, log aggregation), this leaks partial token material that could aid targeted attacks.
+271: 
+272: **Remediation:** Log the token length or a hash instead of a prefix:
+273: 
+274: ```python
+275: logger.info(
+276:     "Cronometer login successful (userId=%d, token_len=%d)",
+277:     self._user_id,
+278:     len(self._token) if self._token else 0,
+279: )
+280: ```
+281: 
+282: ---
+283: 
+284: ### ADD-8: INFO — `copy_day` and `get_fasting_with_date_range` bypass the timezone fix
+285: 
+286: In `client.py`, two methods use bare `date.today()` instead of `self._local_today()`:
+287: 
+288: - `copy_day` (line 547): `to_day = to_day or date.today()`
+289: - `get_fasting_with_date_range` (line 669): `end = end or date.today()`
+290: 
+291: These bypass the `CRONOMETER_TIMEZONE` setting and use the server's system timezone (UTC on Railway). This isn't a security vulnerability, but it's a data integrity bug — these methods will operate on the wrong day when called near midnight Pacific time.
+292: 
+293: **Remediation:** Replace both with `self._local_today()`:
+294: 
+295: ```python
+296: # In copy_day:
+297: to_day = to_day or self._local_today()
+298: 
+299: # In get_fasting_with_date_range:
+300: end = end or self._local_today()
+301: ```
+302: 
+303: This is a drive-by fix — small, safe, and corrects a known regression.
+304: 
+305: ---
+306: 
+307: ### ADD-9: INFO — No dependency security scanning in CI
+308: 
+309: `ci.yml` runs ruff lint and format checks only. There is no `pip-audit`, `safety`, or similar tool checking for known vulnerabilities in dependencies (`httpx`, `uvicorn`, `mcp`, `python-dotenv`, `tzdata`).
+310: 
+311: Given this server holds Cronometer account credentials, a compromised dependency is a credential theft vector.
+312: 
+313: **Remediation:** Add `pip-audit` to the CI pipeline:
+314: 
+315: ```yaml
+316: # In .github/workflows/ci.yml, add a job:
+317:   audit:
+318:     runs-on: ubuntu-latest
+319:     steps:
+320:       - uses: actions/checkout@v4
+321:       - name: Install uv
+322:         uses: astral-sh/setup-uv@v4
+323:       - name: Install dependencies
+324:         run: uv sync
+325:       - name: Audit dependencies
+326:         run: uv run pip-audit
+327: ```
+328: 
+329: Add `pip-audit` to the `[dependency-groups] dev` list in `pyproject.toml`:
+330: 
+331: ```toml
+332: [dependency-groups]
+333: dev = [
+334:     "ruff>=0.8.0",
+335:     "pip-audit>=2.7.0",
+336: ]
+337: ```
+338: 
+339: ---
+340: 
+341: ### ADD-10: INFO — `MCP_BASE_URL` defaults to `http://` with no HTTPS warning
+342: 
+343: ```python
+344: base_url = os.getenv("MCP_BASE_URL", f"http://localhost:{port}")
+345: ```
+346: 
+347: The OAuth metadata endpoints will advertise HTTP URLs if `MCP_BASE_URL` isn't set or is set to an `http://` URL. In production behind Railway's edge, the actual connection is HTTPS (Railway terminates TLS), but the metadata will claim HTTP, which could confuse OAuth clients.
+348: 
+349: **Remediation:** In the fail-closed startup check (Step 3 / §7h), add a warning if `MCP_BASE_URL` doesn't start with `https://`:
+350: 
+351: ```python
+352: if not base_url.startswith("https://"):
+353:     logger.warning(
+354:         "MCP_BASE_URL does not use HTTPS (%s). "
+355:         "OAuth metadata will advertise insecure endpoints. "
+356:         "Set MCP_BASE_URL to your public HTTPS URL for production.",
+357:         base_url,
+358:     )
+359: ```
+360: 
+361: Don't hard-fail on this (it would break local dev), but warn loudly.
+362: 
+363: ---
+364: 
+365: ## 4. Updated remediation order
+366: 
+367: The original Steps 0–8 remain in their original order and priority. The additions slot in as follows:
+368: 
+369: | Priority | Step | Source | Summary |
+370: |----------|------|--------|---------|
+371: | **Immediate** | Step 0 | Original | Rotate `MCP_AUTH_TOKEN`; change Cronometer password if exposed |
+372: | **Critical** | Steps 1–3 | Original | Approve-secret gate, fail-closed, core auth fix |
+373: | **High** | Step 4 | Original | Auth-code TTL |
+374: | **High** | ADD-1 | New | Docker deployment auth warning / remediation |
+375: | **High** | ADD-2 | New | `_read_body` size limit |
+376: | **Medium** | Step 5 | Original | Constant-time comparisons |
+377: | **Medium** | Step 6 | Original | Per-IP rate limiting |
+378: | **Medium** | ADD-3 | New | Dict cleanup + size caps |
+379: | **Medium** | Step 7 | Original | HTML-escape the authorize page |
+380: | **Low** | ADD-4 | New | Use `html.escape` from stdlib instead of custom |
+381: | **Low** | ADD-5 | New | Stop echoing `client_secret` in `/register` |
+382: | **Low** | ADD-6 | New | `redirect_uri` validation |
+383: | **Low** | ADD-7 | New | Stop logging partial session token |
+384: | **Info** | Step 8 | Original | Env hygiene (Railway 2FA, dedicated account) |
+385: | **Info** | ADD-8 | New | Fix `date.today()` → `_local_today()` in two methods |
+386: | **Info** | ADD-9 | New | Add `pip-audit` to CI |
+387: | **Info** | ADD-10 | New | Warn on non-HTTPS `MCP_BASE_URL` |
+388: 
+389: ---
+390: 
+391: ## 5. Updated verification plan
+392: 
+393: Add these checks to the original §8 verification plan:
+394: 
+395: 9. **Body-size test** — `curl -X POST "$BASE/authorize" --data-binary @/dev/zero --max-time 5` → server returns 413 or drops the connection, does not OOM.
+396: 10. **Dict cleanup test** — After deploying, submit 5+ authorize requests with wrong secrets, wait past the `AUTH_WINDOW_S` window, then verify the rate-limit dict is cleaned up (check server memory or add a debug log for dict sizes).
+397: 11. **Docker auth test** — Pull the published Docker image, run it with no auth env vars, confirm either (a) it refuses to start, (b) it prints a clear security warning, or (c) it is documented as requiring a reverse proxy.
+398: 12. **Timezone regression test** — Call `copy_day` and `get_fasting_history` near midnight Pacific time, confirm they use the correct local date (not UTC).
+399: 13. **`/register` response test** — `POST /register` and confirm `client_secret` is not in the response body (if Option A from ADD-5 is implemented; skip if deferred due to connector compatibility).
+400: 
+401: ---
+402: 
+403: ## 6. Files to modify
+404: 
+405: Summary for the implementing agent:
+406: 
+407: | File | Changes |
+408: |------|---------|
+409: | `src/cronometer_api_mcp/server.py` | All original Steps 1–7 + ADD-2 (body limit), ADD-3 (dict cleanup), ADD-4 (stdlib html.escape), ADD-5 (/register), ADD-7 (token logging), ADD-10 (HTTPS warning) |
+410: | `src/cronometer_api_mcp/client.py` | ADD-8 (two `date.today()` → `_local_today()` fixes), ADD-7 (session token log) |
+411: | `Dockerfile` | ADD-1 (add comment about auth, or change entrypoint — depending on chosen option) |
+412: | `README.md` | ADD-1 (Docker security warning), original Step 7i docs |
+413: | `.env.example` | Original Step 7i (`MCP_AUTH_TOKEN=`, `MCP_APPROVE_SECRET=`) |
+414: | `pyproject.toml` | ADD-9 (`pip-audit` in dev deps) |
+415: | `.github/workflows/ci.yml` | ADD-9 (audit job) |
+416: 
+417: ---
+418: 
+419: ## 7. What NOT to change
+420: 
+421: - Tool definitions and annotations in `server.py` — these are correct.
+422: - The MCP tool surface itself — no shell injection, no eval, no unsafe patterns.
+423: - PKCE S256 verification in `_handle_token` — correct, do not regress.
+424: - Single-use code consumption (`pop`) — correct, do not regress.
+425: - `/favicon.ico` special-casing — keep this, it prevents 401 during the authorize page load.
+426: - The `_get_client()` singleton pattern — fine for a single-user server.
+427: - The `_err()` error-wrapping pattern — adequate for MCP tool responses.
 </file>
 
 <file path="SECURITY-REVIEW.md">
@@ -536,199 +1101,20 @@ This section contains the contents of the repository's files.
 22: 
 23:       - name: Check formatting with ruff
 24:         run: uv run ruff format --check
-</file>
-
-<file path=".github/workflows/docker.yml">
- 1: name: Build Docker image
- 2: 
- 3: on:
- 4:   push:
- 5:     branches: [main]
- 6:   release:
- 7:     types: [published]
- 8: 
- 9: concurrency:
-10:   group: docker-${{ github.ref }}
-11:   cancel-in-progress: true
-12: 
-13: jobs:
-14:   build:
-15:     runs-on: ubuntu-latest
-16:     permissions:
-17:       contents: read
-18:       packages: write
-19:       # Required for build provenance attestation
-20:       id-token: write
-21:       attestations: write
-22: 
-23:     steps:
-24:       - uses: actions/checkout@v4
 25: 
-26:       - name: Set up QEMU
-27:         uses: docker/setup-qemu-action@v3
-28: 
-29:       - name: Set up Docker Buildx
-30:         uses: docker/setup-buildx-action@v3
-31: 
-32:       - name: Log in to GHCR
-33:         uses: docker/login-action@v3
-34:         with:
-35:           registry: ghcr.io
-36:           username: ${{ github.actor }}
-37:           password: ${{ secrets.GITHUB_TOKEN }}
-38: 
-39:       - name: Compute image metadata
-40:         id: meta
-41:         uses: docker/metadata-action@v5
-42:         with:
-43:           images: ghcr.io/${{ github.repository }}
-44:           tags: |
-45:             type=semver,pattern={{version}}
-46:             type=semver,pattern={{major}}.{{minor}}
-47:             type=raw,value=latest,enable={{is_default_branch}}
-48: 
-49:       - name: Build and push
-50:         id: build
-51:         uses: docker/build-push-action@v5
-52:         with:
-53:           context: .
-54:           platforms: linux/amd64,linux/arm64
-55:           push: true
-56:           tags: ${{ steps.meta.outputs.tags }}
-57:           labels: ${{ steps.meta.outputs.labels }}
-58:           cache-from: type=gha
-59:           cache-to: type=gha,mode=max
-60: 
-61:       - name: Generate build provenance attestation
-62:         uses: actions/attest-build-provenance@v1
-63:         with:
-64:           subject-name: ghcr.io/${{ github.repository }}
-65:           subject-digest: ${{ steps.build.outputs.digest }}
-66:           push-to-registry: true
-</file>
-
-<file path="src/cronometer_api_mcp/__init__.py">
-1: """Cronometer MCP server using the mobile REST API."""
-2: 
-3: from .client import CronometerClient, CronometerError
-4: 
-5: __all__ = ["CronometerClient", "CronometerError"]
-</file>
-
-<file path=".dockerignore">
- 1: # Exclude noise from the build context
- 2: .git
- 3: .gitignore
- 4: __pycache__
- 5: *.pyc
- 6: .venv
- 7: venv
- 8: .pytest_cache
- 9: .ruff_cache
-10: dist
-11: build
-12: *.egg-info
-13: flows
-14: *.md
-15: !README.md
-16: Procfile
-17: opencode.json
-18: server.json
-19: skills-lock.json
-20: session-*.md
-21: Dockerfile
-22: .dockerignore
-</file>
-
-<file path=".env.example">
-1: CRONOMETER_USERNAME=
-2: CRONOMETER_PASSWORD=
-</file>
-
-<file path=".python-version">
-1: 3.14
-</file>
-
-<file path="Dockerfile">
- 1: # Cronometer MCP image, wrapped with supergateway.
- 2: #
- 3: # Contract (same for every MCP hosted by this gateway):
- 4: #   - Exposes MCP streamable-HTTP on 0.0.0.0:$PORT at /mcp
- 5: #   - Health endpoint at /healthz
- 6: #   - stdio-speaking MCP process is spawned by supergateway as a child;
- 7: #     supergateway handles protocol translation, session binding, and
- 8: #     server->client SSE notifications.
- 9: #
-10: # The gateway reverse-proxies HTTP into this container. No stdio, Docker
-11: # attach, or EOF games are required anywhere.
-12: #
-13: # Base image: supercorp/supergateway:uvx (Alpine + Node 20 + uv).
-14: # We install Python 3.14 via uv (cronometer-api-mcp requires >=3.14).
-15: 
-16: FROM supercorp/supergateway:uvx
-17: 
-18: ENV PYTHONDONTWRITEBYTECODE=1 \
-19:     PYTHONUNBUFFERED=1 \
-20:     UV_LINK_MODE=copy \
-21:     UV_PYTHON_INSTALL_DIR=/opt/uv-python \
-22:     UV_TOOL_DIR=/opt/uv-tools \
-23:     UV_TOOL_BIN_DIR=/usr/local/bin \
-24:     PORT=8080
-25: 
-26: WORKDIR /app
-27: 
-28: # Copy the package source. Uses the .dockerignore alongside this file.
-29: COPY pyproject.toml README.md ./
-30: COPY src ./src
-31: 
-32: # Pre-install Python 3.14 into a deterministic location, then install the MCP
-33: # as a uv tool so its console entry point (`cronometer-api-mcp`) lands in
-34: # /usr/local/bin on $PATH.
-35: RUN uv python install 3.14 \
-36:     && uv tool install --python 3.14 . \
-37:     && cronometer-api-mcp --help >/dev/null 2>&1 || true
-38: 
-39: # supergateway wraps the stdio MCP; Nomad (or docker run -p) remaps $PORT.
-40: # --stateful enables Mcp-Session-Id semantics per the MCP streamable-HTTP spec.
-41: # --sessionTimeout is unused here because gateway owns reaping via Nomad;
-42: #   we still set a generous value so a forgotten session eventually self-heals.
-43: ENTRYPOINT ["/bin/sh", "-c", "exec supergateway \
-44:   --stdio 'cronometer-api-mcp' \
-45:   --outputTransport streamableHttp \
-46:   --stateful \
-47:   --streamableHttpPath /mcp \
-48:   --healthEndpoint /healthz \
-49:   --port \"${PORT}\" \
-50:   --sessionTimeout 3600000 \
-51:   --logLevel info"]
-</file>
-
-<file path="LICENSE">
- 1: MIT License
- 2: 
- 3: Copyright (c) 2026 Randy Westergren
- 4: 
- 5: Permission is hereby granted, free of charge, to any person obtaining a copy
- 6: of this software and associated documentation files (the "Software"), to deal
- 7: in the Software without restriction, including without limitation the rights
- 8: to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- 9: copies of the Software, and to permit persons to whom the Software is
-10: furnished to do so, subject to the following conditions:
-11: 
-12: The above copyright notice and this permission notice shall be included in all
-13: copies or substantial portions of the Software.
-14: 
-15: THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-16: IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-17: FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-18: AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-19: LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-20: OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-21: SOFTWARE.
-</file>
-
-<file path="Procfile">
-1: web: cronometer-api-mcp
+26:   audit:
+27:     runs-on: ubuntu-latest
+28:     steps:
+29:       - uses: actions/checkout@v4
+30: 
+31:       - name: Install uv
+32:         uses: astral-sh/setup-uv@v4
+33: 
+34:       - name: Install dependencies
+35:         run: uv sync
+36: 
+37:       - name: Audit dependencies for known vulnerabilities
+38:         run: uv run pip-audit
 </file>
 
 <file path=".github/workflows/publish.yml">
@@ -780,6 +1166,17 @@ This section contains the contents of the repository's files.
 46:         run: ./mcp-publisher publish
 </file>
 
+<file path=".env.example">
+1: CRONOMETER_USERNAME=
+2: CRONOMETER_PASSWORD=
+3: 
+4: # --- Remote transport (Railway / hosted) ---
+5: # Required when MCP_TRANSPORT=streamable-http or sse. The server refuses to
+6: # start a remote transport unless BOTH of these are set.
+7: MCP_AUTH_TOKEN=         # bearer token that gates the MCP endpoint (header only). Generate: openssl rand -hex 32
+8: MCP_APPROVE_SECRET=     # secret you type ONCE in the browser approve page when connecting. Keep DISTINCT from MCP_AUTH_TOKEN (min 16 chars). Generate: openssl rand -hex 32
+</file>
+
 <file path=".gitignore">
 1: .env
 2: __pycache__/
@@ -790,6 +1187,73 @@ This section contains the contents of the repository's files.
 7: build/
 8: .ruff_cache/
 9: .claude/
+</file>
+
+<file path="Dockerfile">
+ 1: # Cronometer MCP image, wrapped with supergateway.
+ 2: #
+ 3: # Contract (same for every MCP hosted by this gateway):
+ 4: #   - Exposes MCP streamable-HTTP on 0.0.0.0:$PORT at /mcp
+ 5: #   - Health endpoint at /healthz
+ 6: #   - stdio-speaking MCP process is spawned by supergateway as a child;
+ 7: #     supergateway handles protocol translation, session binding, and
+ 8: #     server->client SSE notifications.
+ 9: #
+10: # The gateway reverse-proxies HTTP into this container. No stdio, Docker
+11: # attach, or EOF games are required anywhere.
+12: #
+13: # Base image: supercorp/supergateway:uvx (Alpine + Node 20 + uv).
+14: # We install Python 3.14 via uv (cronometer-api-mcp requires >=3.14).
+15: #
+16: # ⚠️  SECURITY WARNING — READ BEFORE EXPOSING THIS IMAGE PUBLICLY
+17: # This entrypoint runs the MCP in STDIO mode under supergateway. In stdio mode
+18: # the app NEVER applies OAuthAuthorizationMiddleware (that code path only runs
+19: # when MCP_TRANSPORT=streamable-http or sse). So this image, as built, exposes
+20: # every MCP tool with NO authentication. Do NOT expose this container directly
+21: # to the public internet. Either:
+22: #   (a) run it only behind an authenticating reverse proxy / private network
+23: #       (Caddy basicauth, Cloudflare Access, Tailscale, etc.), or
+24: #   (b) deploy using the native transport instead (MCP_TRANSPORT=streamable-http
+25: #       with MCP_AUTH_TOKEN and MCP_APPROVE_SECRET set), which engages the
+26: #       built-in OAuth approve-secret gate. The native path is what the
+27: #       hosted Railway deployment uses.
+28: 
+29: FROM supercorp/supergateway:uvx
+30: 
+31: ENV PYTHONDONTWRITEBYTECODE=1 \
+32:     PYTHONUNBUFFERED=1 \
+33:     UV_LINK_MODE=copy \
+34:     UV_PYTHON_INSTALL_DIR=/opt/uv-python \
+35:     UV_TOOL_DIR=/opt/uv-tools \
+36:     UV_TOOL_BIN_DIR=/usr/local/bin \
+37:     PORT=8080
+38: 
+39: WORKDIR /app
+40: 
+41: # Copy the package source. Uses the .dockerignore alongside this file.
+42: COPY pyproject.toml README.md ./
+43: COPY src ./src
+44: 
+45: # Pre-install Python 3.14 into a deterministic location, then install the MCP
+46: # as a uv tool so its console entry point (`cronometer-api-mcp`) lands in
+47: # /usr/local/bin on $PATH.
+48: RUN uv python install 3.14 \
+49:     && uv tool install --python 3.14 . \
+50:     && cronometer-api-mcp --help >/dev/null 2>&1 || true
+51: 
+52: # supergateway wraps the stdio MCP; Nomad (or docker run -p) remaps $PORT.
+53: # --stateful enables Mcp-Session-Id semantics per the MCP streamable-HTTP spec.
+54: # --sessionTimeout is unused here because gateway owns reaping via Nomad;
+55: #   we still set a generous value so a forgotten session eventually self-heals.
+56: ENTRYPOINT ["/bin/sh", "-c", "exec supergateway \
+57:   --stdio 'cronometer-api-mcp' \
+58:   --outputTransport streamableHttp \
+59:   --stateful \
+60:   --streamableHttpPath /mcp \
+61:   --healthEndpoint /healthz \
+62:   --port \"${PORT}\" \
+63:   --sessionTimeout 3600000 \
+64:   --logLevel info"]
 </file>
 
 <file path="server.json">
@@ -947,9 +1411,9 @@ This section contains the contents of the repository's files.
 115:         self._user_id = data["id"]
 116:         self._token = data["sessionKey"]
 117:         logger.info(
-118:             "Cronometer login successful (userId=%d, token=%s...)",
+118:             "Cronometer login successful (userId=%d, token_len=%d)",
 119:             self._user_id,
-120:             self._token[:8] if self._token else "???",
+120:             len(self._token) if self._token else 0,
 121:         )
 122: 
 123:     def _ensure_auth(self) -> None:
@@ -1376,7 +1840,7 @@ This section contains the contents of the repository's files.
 544:         """
 545:         from datetime import timedelta
 546: 
-547:         to_day = to_day or date.today()
+547:         to_day = to_day or self._local_today()
 548:         from_day = from_day or (to_day - timedelta(days=1))
 549: 
 550:         payload = {
@@ -1498,7 +1962,7 @@ This section contains the contents of the repository's files.
 666:         """
 667:         from datetime import timedelta
 668: 
-669:         end = end or date.today()
+669:         end = end or self._local_today()
 670:         start = start or (end - timedelta(days=30))
 671: 
 672:         payload = {
@@ -1579,1078 +2043,1258 @@ This section contains the contents of the repository's files.
 35: [dependency-groups]
 36: dev = [
 37:     "ruff>=0.8.0",
-38: ]
-39: 
-40: [tool.hatch.build.targets.wheel]
-41: packages = ["src/cronometer_api_mcp"]
+38:     "pip-audit>=2.7.0",
+39: ]
+40: 
+41: [tool.hatch.build.targets.wheel]
+42: packages = ["src/cronometer_api_mcp"]
 </file>
 
 <file path="src/cronometer_api_mcp/server.py">
    1: """MCP server for Cronometer nutrition data via the mobile REST API."""
    2: 
-   3: import json
-   4: import logging
-   5: import os
-   6: from datetime import date, timedelta
-   7: 
-   8: from mcp.server.fastmcp import FastMCP
-   9: from mcp.server.transport_security import TransportSecuritySettings
-  10: 
-  11: from .client import CronometerClient
-  12: 
-  13: logging.basicConfig(level=logging.INFO)
-  14: logger = logging.getLogger(__name__)
-  15: 
-  16: mcp = FastMCP(
-  17:     "cronometer",
-  18:     instructions=(
-  19:         "Cronometer MCP server for nutrition tracking via the mobile REST API. "
-  20:         "Provides access to food search, diary management, daily nutrition data, "
-  21:         "macro targets, biometrics, and fasting history from Cronometer. "
-  22:         "Use search_foods to find foods, get_food_details for nutrition info "
-  23:         "and serving sizes, add_food_entry to log meals, and get_food_log to "
-  24:         "review what was eaten."
-  25:     ),
-  26:     transport_security=TransportSecuritySettings(
-  27:         enable_dns_rebinding_protection=False,
-  28:     ),
-  29: )
-  30: 
-  31: _client: CronometerClient | None = None
-  32: 
-  33: 
-  34: def _get_client() -> CronometerClient:
-  35:     global _client
-  36:     if _client is None:
-  37:         _client = CronometerClient()
-  38:     return _client
-  39: 
-  40: 
-  41: def _parse_date(d: str | None) -> date | None:
-  42:     if d is None:
-  43:         return None
-  44:     return date.fromisoformat(d)
-  45: 
+   3: import hmac
+   4: import json
+   5: import logging
+   6: import os
+   7: import time
+   8: from datetime import date, timedelta
+   9: from hashlib import sha256
+  10: from html import escape as _html_escape
+  11: 
+  12: from mcp.server.fastmcp import FastMCP
+  13: from mcp.server.transport_security import TransportSecuritySettings
+  14: 
+  15: from .client import CronometerClient
+  16: 
+  17: logging.basicConfig(level=logging.INFO)
+  18: logger = logging.getLogger(__name__)
+  19: 
+  20: # --- OAuth / auth-gate tunables --------------------------------------------
+  21: CODE_TTL_S = 5 * 60            # pending auth codes expire 5 minutes after issue
+  22: MAX_AUTH_ATTEMPTS = 5          # failed approve-secret tries per IP per window
+  23: AUTH_WINDOW_S = 60             # rate-limit window
+  24: MAX_BODY_BYTES = 64 * 1024     # cap on OAuth request bodies (DoS guard)
+  25: MAX_PENDING_CODES = 100        # backstop cap on the pending-code store
+  26: 
+  27: 
+  28: def _safe_equal(a: str, b: str) -> bool:
+  29:     """Constant-time string comparison (length-independent via fixed-size hash)."""
+  30:     return hmac.compare_digest(sha256(a.encode()).digest(), sha256(b.encode()).digest())
+  31: 
+  32: mcp = FastMCP(
+  33:     "cronometer",
+  34:     instructions=(
+  35:         "Cronometer MCP server for nutrition tracking via the mobile REST API. "
+  36:         "Provides access to food search, diary management, daily nutrition data, "
+  37:         "macro targets, biometrics, and fasting history from Cronometer. "
+  38:         "Use search_foods to find foods, get_food_details for nutrition info "
+  39:         "and serving sizes, add_food_entry to log meals, and get_food_log to "
+  40:         "review what was eaten."
+  41:     ),
+  42:     transport_security=TransportSecuritySettings(
+  43:         enable_dns_rebinding_protection=False,
+  44:     ),
+  45: )
   46: 
-  47: def _ok(data: dict) -> str:
-  48:     """Wrap a successful response."""
-  49:     return json.dumps({"status": "success", **data}, indent=2)
-  50: 
-  51: 
-  52: def _err(e: Exception) -> str:
-  53:     """Wrap an error response with actionable messages."""
-  54:     import httpx
+  47: _client: CronometerClient | None = None
+  48: 
+  49: 
+  50: def _get_client() -> CronometerClient:
+  51:     global _client
+  52:     if _client is None:
+  53:         _client = CronometerClient()
+  54:     return _client
   55: 
-  56:     if isinstance(e, httpx.HTTPStatusError):
-  57:         status = e.response.status_code
-  58:         if status == 401 or status == 403:
-  59:             msg = "Authentication failed. Cronometer session may have expired -- try again."
-  60:         elif status == 429:
-  61:             msg = "Rate limit exceeded. Wait a few minutes before retrying."
-  62:         elif status == 404:
-  63:             msg = f"Resource not found (HTTP {status})."
-  64:         else:
-  65:             msg = f"Cronometer API error (HTTP {status})."
-  66:     elif isinstance(e, httpx.TimeoutException):
-  67:         msg = "Request timed out. Cronometer may be slow -- try again."
-  68:     elif isinstance(e, httpx.ConnectError):
-  69:         msg = "Could not connect to Cronometer. Check network connectivity."
-  70:     else:
-  71:         msg = f"{type(e).__name__}: {e}"
-  72: 
-  73:     return json.dumps({"status": "error", "message": msg})
-  74: 
-  75: 
-  76: # ------------------------------------------------------------------
-  77: # Diary: read
-  78: # ------------------------------------------------------------------
-  79: 
-  80: 
-  81: @mcp.tool(
-  82:     annotations={
-  83:         "readOnlyHint": True,
-  84:         "destructiveHint": False,
-  85:         "idempotentHint": True,
-  86:         "openWorldHint": True,
-  87:     }
-  88: )
-  89: def get_food_log(date: str | None = None) -> str:
-  90:     """Get all diary entries for a given date.
+  56: 
+  57: def _parse_date(d: str | None) -> date | None:
+  58:     if d is None:
+  59:         return None
+  60:     return date.fromisoformat(d)
+  61: 
+  62: 
+  63: def _ok(data: dict) -> str:
+  64:     """Wrap a successful response."""
+  65:     return json.dumps({"status": "success", **data}, indent=2)
+  66: 
+  67: 
+  68: def _err(e: Exception) -> str:
+  69:     """Wrap an error response with actionable messages."""
+  70:     import httpx
+  71: 
+  72:     if isinstance(e, httpx.HTTPStatusError):
+  73:         status = e.response.status_code
+  74:         if status == 401 or status == 403:
+  75:             msg = "Authentication failed. Cronometer session may have expired -- try again."
+  76:         elif status == 429:
+  77:             msg = "Rate limit exceeded. Wait a few minutes before retrying."
+  78:         elif status == 404:
+  79:             msg = f"Resource not found (HTTP {status})."
+  80:         else:
+  81:             msg = f"Cronometer API error (HTTP {status})."
+  82:     elif isinstance(e, httpx.TimeoutException):
+  83:         msg = "Request timed out. Cronometer may be slow -- try again."
+  84:     elif isinstance(e, httpx.ConnectError):
+  85:         msg = "Could not connect to Cronometer. Check network connectivity."
+  86:     else:
+  87:         msg = f"{type(e).__name__}: {e}"
+  88: 
+  89:     return json.dumps({"status": "error", "message": msg})
+  90: 
   91: 
-  92:     Returns every food entry logged for the day, including food names,
-  93:     amounts, meal groups, and nutrient data.
-  94: 
-  95:     Also returns a top-level energy_summary field with pre-computed
-  96:     values most relevant to the user:
-  97: 
-  98:       - total_target_kcal: daily calorie target dynamically adjusted
-  99:         for expenditure and weight goal (equivalent to Cronometer's
- 100:         "Total Target" in the Energy Summary screen)
- 101:       - consumed_kcal: total calories consumed
- 102:       - remaining_kcal: calories remaining to stay on target
- 103:         (total_target_kcal - consumed_kcal). Always report this
- 104:         when summarizing the user's day. Prefer this over manually
- 105:         deriving values from the burn breakdown fields.
- 106: 
- 107:     Args:
- 108:         date: Date as YYYY-MM-DD (defaults to today).
- 109:     """
- 110:     try:
- 111:         client = _get_client()
- 112:         day = _parse_date(date)
- 113:         data = client.get_diary(day)
- 114: 
- 115:         summary = (data or {}).get("summary") or {}
- 116:         target = (summary.get("macros") or {}).get("energy")
- 117:         consumed = (summary.get("consumed") or {}).get("total")
- 118:         energy_summary: dict | None = None
- 119:         if target is not None and consumed is not None:
- 120:             energy_summary = {
- 121:                 "total_target_kcal": target,
- 122:                 "consumed_kcal": consumed,
- 123:                 "remaining_kcal": int(round(target - consumed)),
- 124:             }
- 125: 
- 126:         return _ok(
- 127:             {
- 128:                 "date": date or str(date_module_today()),
- 129:                 "energy_summary": energy_summary,
- 130:                 "diary": data,
- 131:             }
- 132:         )
- 133:     except Exception as e:
- 134:         return _err(e)
- 135: 
- 136: 
- 137: # ------------------------------------------------------------------
- 138: # Diary: write
- 139: # ------------------------------------------------------------------
- 140: 
+  92: # ------------------------------------------------------------------
+  93: # Diary: read
+  94: # ------------------------------------------------------------------
+  95: 
+  96: 
+  97: @mcp.tool(
+  98:     annotations={
+  99:         "readOnlyHint": True,
+ 100:         "destructiveHint": False,
+ 101:         "idempotentHint": True,
+ 102:         "openWorldHint": True,
+ 103:     }
+ 104: )
+ 105: def get_food_log(date: str | None = None) -> str:
+ 106:     """Get all diary entries for a given date.
+ 107: 
+ 108:     Returns every food entry logged for the day, including food names,
+ 109:     amounts, meal groups, and nutrient data.
+ 110: 
+ 111:     Also returns a top-level energy_summary field with pre-computed
+ 112:     values most relevant to the user:
+ 113: 
+ 114:       - total_target_kcal: daily calorie target dynamically adjusted
+ 115:         for expenditure and weight goal (equivalent to Cronometer's
+ 116:         "Total Target" in the Energy Summary screen)
+ 117:       - consumed_kcal: total calories consumed
+ 118:       - remaining_kcal: calories remaining to stay on target
+ 119:         (total_target_kcal - consumed_kcal). Always report this
+ 120:         when summarizing the user's day. Prefer this over manually
+ 121:         deriving values from the burn breakdown fields.
+ 122: 
+ 123:     Args:
+ 124:         date: Date as YYYY-MM-DD (defaults to today).
+ 125:     """
+ 126:     try:
+ 127:         client = _get_client()
+ 128:         day = _parse_date(date)
+ 129:         data = client.get_diary(day)
+ 130: 
+ 131:         summary = (data or {}).get("summary") or {}
+ 132:         target = (summary.get("macros") or {}).get("energy")
+ 133:         consumed = (summary.get("consumed") or {}).get("total")
+ 134:         energy_summary: dict | None = None
+ 135:         if target is not None and consumed is not None:
+ 136:             energy_summary = {
+ 137:                 "total_target_kcal": target,
+ 138:                 "consumed_kcal": consumed,
+ 139:                 "remaining_kcal": int(round(target - consumed)),
+ 140:             }
  141: 
- 142: @mcp.tool(
- 143:     annotations={
- 144:         "readOnlyHint": False,
- 145:         "destructiveHint": False,
- 146:         "idempotentHint": False,
- 147:         "openWorldHint": True,
- 148:     }
- 149: )
- 150: def add_food_entry(
- 151:     food_id: int,
- 152:     measure_id: int,
- 153:     grams: float,
- 154:     date: str | None = None,
- 155:     translation_id: int = 0,
- 156:     diary_group: str = "auto",
- 157: ) -> str:
- 158:     """Add a food entry to the Cronometer diary.
- 159: 
- 160:     Use search_foods to find food_id and measure_id, then
- 161:     get_food_details to confirm serving sizes and gram weights.
- 162: 
- 163:     Args:
- 164:         food_id: Numeric food ID from search_foods results.
- 165:         measure_id: Measure/unit ID from get_food_details.
- 166:         grams: Weight of the serving in grams.
- 167:         date: Date to log as YYYY-MM-DD (defaults to today).
- 168:         translation_id: Translation ID from search results (usually 0).
- 169:         diary_group: Meal slot -- one of "auto", "breakfast", "lunch",
- 170:                      "dinner", "snacks" (case-insensitive, default "auto").
- 171:     """
- 172:     try:
- 173:         group_map = {
- 174:             "auto": 0,
- 175:             "breakfast": 1,
- 176:             "lunch": 2,
- 177:             "dinner": 3,
- 178:             "snacks": 4,
- 179:         }
- 180:         group_key = diary_group.strip().lower()
- 181:         group_int = group_map.get(group_key)
- 182:         if group_int is None:
- 183:             return _err(
- 184:                 ValueError(
- 185:                     f"Invalid diary_group '{diary_group}'. "
- 186:                     "Must be one of: auto, breakfast, lunch, dinner, snacks."
- 187:                 )
- 188:             )
- 189: 
- 190:         client = _get_client()
- 191:         day = _parse_date(date)
- 192:         result = client.add_serving(
- 193:             food_id=food_id,
- 194:             measure_id=measure_id,
- 195:             grams=grams,
- 196:             translation_id=translation_id,
- 197:             day=day,
- 198:             diary_group=group_int,
- 199:         )
- 200:         return _ok(
- 201:             {
- 202:                 "entry": result,
- 203:                 "note": "Use the serving ID to remove this entry with remove_food_entry.",
- 204:             }
- 205:         )
- 206:     except Exception as e:
- 207:         return _err(e)
- 208: 
- 209: 
- 210: @mcp.tool(
- 211:     annotations={
- 212:         "readOnlyHint": False,
- 213:         "destructiveHint": True,
- 214:         "idempotentHint": True,
- 215:         "openWorldHint": True,
- 216:     }
- 217: )
- 218: def remove_food_entry(
- 219:     entry_ids: list[str],
- 220:     date: str | None = None,
- 221: ) -> str:
- 222:     """Remove one or more food entries from the Cronometer diary.
- 223: 
- 224:     Use get_food_log to find entry IDs.
+ 142:         return _ok(
+ 143:             {
+ 144:                 "date": date or str(date_module_today()),
+ 145:                 "energy_summary": energy_summary,
+ 146:                 "diary": data,
+ 147:             }
+ 148:         )
+ 149:     except Exception as e:
+ 150:         return _err(e)
+ 151: 
+ 152: 
+ 153: # ------------------------------------------------------------------
+ 154: # Diary: write
+ 155: # ------------------------------------------------------------------
+ 156: 
+ 157: 
+ 158: @mcp.tool(
+ 159:     annotations={
+ 160:         "readOnlyHint": False,
+ 161:         "destructiveHint": False,
+ 162:         "idempotentHint": False,
+ 163:         "openWorldHint": True,
+ 164:     }
+ 165: )
+ 166: def add_food_entry(
+ 167:     food_id: int,
+ 168:     measure_id: int,
+ 169:     grams: float,
+ 170:     date: str | None = None,
+ 171:     translation_id: int = 0,
+ 172:     diary_group: str = "auto",
+ 173: ) -> str:
+ 174:     """Add a food entry to the Cronometer diary.
+ 175: 
+ 176:     Use search_foods to find food_id and measure_id, then
+ 177:     get_food_details to confirm serving sizes and gram weights.
+ 178: 
+ 179:     Args:
+ 180:         food_id: Numeric food ID from search_foods results.
+ 181:         measure_id: Measure/unit ID from get_food_details.
+ 182:         grams: Weight of the serving in grams.
+ 183:         date: Date to log as YYYY-MM-DD (defaults to today).
+ 184:         translation_id: Translation ID from search results (usually 0).
+ 185:         diary_group: Meal slot -- one of "auto", "breakfast", "lunch",
+ 186:                      "dinner", "snacks" (case-insensitive, default "auto").
+ 187:     """
+ 188:     try:
+ 189:         group_map = {
+ 190:             "auto": 0,
+ 191:             "breakfast": 1,
+ 192:             "lunch": 2,
+ 193:             "dinner": 3,
+ 194:             "snacks": 4,
+ 195:         }
+ 196:         group_key = diary_group.strip().lower()
+ 197:         group_int = group_map.get(group_key)
+ 198:         if group_int is None:
+ 199:             return _err(
+ 200:                 ValueError(
+ 201:                     f"Invalid diary_group '{diary_group}'. "
+ 202:                     "Must be one of: auto, breakfast, lunch, dinner, snacks."
+ 203:                 )
+ 204:             )
+ 205: 
+ 206:         client = _get_client()
+ 207:         day = _parse_date(date)
+ 208:         result = client.add_serving(
+ 209:             food_id=food_id,
+ 210:             measure_id=measure_id,
+ 211:             grams=grams,
+ 212:             translation_id=translation_id,
+ 213:             day=day,
+ 214:             diary_group=group_int,
+ 215:         )
+ 216:         return _ok(
+ 217:             {
+ 218:                 "entry": result,
+ 219:                 "note": "Use the serving ID to remove this entry with remove_food_entry.",
+ 220:             }
+ 221:         )
+ 222:     except Exception as e:
+ 223:         return _err(e)
+ 224: 
  225: 
- 226:     Args:
- 227:         entry_ids: List of serving/entry IDs to remove.
- 228:         date: Date the entries belong to as YYYY-MM-DD (defaults to today).
- 229:     """
- 230:     try:
- 231:         client = _get_client()
- 232:         day = _parse_date(date)
- 233:         result = client.delete_entries(entry_ids, day)
- 234:         return _ok(
- 235:             {
- 236:                 "removed": result.get("removed", []),
- 237:                 "count": result.get("count", 0),
- 238:                 "date": date or str(date_module_today()),
- 239:             }
- 240:         )
- 241:     except Exception as e:
- 242:         return _err(e)
- 243: 
- 244: 
- 245: # ------------------------------------------------------------------
- 246: # Diary: management
- 247: # ------------------------------------------------------------------
- 248: 
- 249: 
- 250: @mcp.tool(
- 251:     annotations={
- 252:         "readOnlyHint": False,
- 253:         "destructiveHint": False,
- 254:         "idempotentHint": True,
- 255:         "openWorldHint": True,
- 256:     }
- 257: )
- 258: def mark_day_complete(date: str, complete: bool = True) -> str:
- 259:     """Mark a diary day as complete or incomplete.
+ 226: @mcp.tool(
+ 227:     annotations={
+ 228:         "readOnlyHint": False,
+ 229:         "destructiveHint": True,
+ 230:         "idempotentHint": True,
+ 231:         "openWorldHint": True,
+ 232:     }
+ 233: )
+ 234: def remove_food_entry(
+ 235:     entry_ids: list[str],
+ 236:     date: str | None = None,
+ 237: ) -> str:
+ 238:     """Remove one or more food entries from the Cronometer diary.
+ 239: 
+ 240:     Use get_food_log to find entry IDs.
+ 241: 
+ 242:     Args:
+ 243:         entry_ids: List of serving/entry IDs to remove.
+ 244:         date: Date the entries belong to as YYYY-MM-DD (defaults to today).
+ 245:     """
+ 246:     try:
+ 247:         client = _get_client()
+ 248:         day = _parse_date(date)
+ 249:         result = client.delete_entries(entry_ids, day)
+ 250:         return _ok(
+ 251:             {
+ 252:                 "removed": result.get("removed", []),
+ 253:                 "count": result.get("count", 0),
+ 254:                 "date": date or str(date_module_today()),
+ 255:             }
+ 256:         )
+ 257:     except Exception as e:
+ 258:         return _err(e)
+ 259: 
  260: 
- 261:     Args:
- 262:         date: Date to mark as YYYY-MM-DD.
- 263:         complete: True to mark complete, False for incomplete.
- 264:     """
- 265:     try:
- 266:         client = _get_client()
- 267:         day = _parse_date(date)
- 268:         result = client.mark_day_complete(day, complete)
- 269:         status = "complete" if complete else "incomplete"
- 270:         return _ok(
- 271:             {
- 272:                 "date": date,
- 273:                 "marked": status,
- 274:                 "result": result,
- 275:             }
- 276:         )
- 277:     except Exception as e:
- 278:         return _err(e)
- 279: 
- 280: 
- 281: @mcp.tool(
- 282:     annotations={
- 283:         "readOnlyHint": False,
- 284:         "destructiveHint": False,
- 285:         "idempotentHint": False,
- 286:         "openWorldHint": True,
- 287:     }
- 288: )
- 289: def copy_day(date: str | None = None) -> str:
- 290:     """Copy all diary entries from the previous day to the given date.
- 291: 
- 292:     Additive -- does not remove existing entries on the destination date.
- 293: 
- 294:     Args:
- 295:         date: Destination date as YYYY-MM-DD (defaults to today).
- 296:     """
- 297:     try:
- 298:         client = _get_client()
- 299:         day = _parse_date(date)
- 300:         result = client.copy_day(to_day=day)
- 301:         return _ok(
- 302:             {
- 303:                 "destination_date": date or str(date_module_today()),
- 304:                 "result": result,
- 305:             }
- 306:         )
- 307:     except Exception as e:
- 308:         return _err(e)
+ 261: # ------------------------------------------------------------------
+ 262: # Diary: management
+ 263: # ------------------------------------------------------------------
+ 264: 
+ 265: 
+ 266: @mcp.tool(
+ 267:     annotations={
+ 268:         "readOnlyHint": False,
+ 269:         "destructiveHint": False,
+ 270:         "idempotentHint": True,
+ 271:         "openWorldHint": True,
+ 272:     }
+ 273: )
+ 274: def mark_day_complete(date: str, complete: bool = True) -> str:
+ 275:     """Mark a diary day as complete or incomplete.
+ 276: 
+ 277:     Args:
+ 278:         date: Date to mark as YYYY-MM-DD.
+ 279:         complete: True to mark complete, False for incomplete.
+ 280:     """
+ 281:     try:
+ 282:         client = _get_client()
+ 283:         day = _parse_date(date)
+ 284:         result = client.mark_day_complete(day, complete)
+ 285:         status = "complete" if complete else "incomplete"
+ 286:         return _ok(
+ 287:             {
+ 288:                 "date": date,
+ 289:                 "marked": status,
+ 290:                 "result": result,
+ 291:             }
+ 292:         )
+ 293:     except Exception as e:
+ 294:         return _err(e)
+ 295: 
+ 296: 
+ 297: @mcp.tool(
+ 298:     annotations={
+ 299:         "readOnlyHint": False,
+ 300:         "destructiveHint": False,
+ 301:         "idempotentHint": False,
+ 302:         "openWorldHint": True,
+ 303:     }
+ 304: )
+ 305: def copy_day(date: str | None = None) -> str:
+ 306:     """Copy all diary entries from the previous day to the given date.
+ 307: 
+ 308:     Additive -- does not remove existing entries on the destination date.
  309: 
- 310: 
- 311: # ------------------------------------------------------------------
- 312: # Nutrition
- 313: # ------------------------------------------------------------------
- 314: 
- 315: 
- 316: @mcp.tool(
- 317:     annotations={
- 318:         "readOnlyHint": True,
- 319:         "destructiveHint": False,
- 320:         "idempotentHint": True,
- 321:         "openWorldHint": True,
- 322:     }
- 323: )
- 324: def get_daily_nutrition(date: str | None = None) -> str:
- 325:     """Get daily nutrition summary with macro and micronutrient totals.
+ 310:     Args:
+ 311:         date: Destination date as YYYY-MM-DD (defaults to today).
+ 312:     """
+ 313:     try:
+ 314:         client = _get_client()
+ 315:         day = _parse_date(date)
+ 316:         result = client.copy_day(to_day=day)
+ 317:         return _ok(
+ 318:             {
+ 319:                 "destination_date": date or str(date_module_today()),
+ 320:                 "result": result,
+ 321:             }
+ 322:         )
+ 323:     except Exception as e:
+ 324:         return _err(e)
+ 325: 
  326: 
- 327:     Returns calorie, protein, carb, fat, fiber totals and micronutrients
- 328:     for the given day.
- 329: 
- 330:     Args:
- 331:         date: Date as YYYY-MM-DD (defaults to today).
- 332:     """
- 333:     try:
- 334:         client = _get_client()
- 335:         day = _parse_date(date)
- 336:         data = client.get_nutrients(day)
- 337:         return _ok(
- 338:             {
- 339:                 "date": date or str(date_module_today()),
- 340:                 "nutrients": data,
- 341:             }
- 342:         )
- 343:     except Exception as e:
- 344:         return _err(e)
+ 327: # ------------------------------------------------------------------
+ 328: # Nutrition
+ 329: # ------------------------------------------------------------------
+ 330: 
+ 331: 
+ 332: @mcp.tool(
+ 333:     annotations={
+ 334:         "readOnlyHint": True,
+ 335:         "destructiveHint": False,
+ 336:         "idempotentHint": True,
+ 337:         "openWorldHint": True,
+ 338:     }
+ 339: )
+ 340: def get_daily_nutrition(date: str | None = None) -> str:
+ 341:     """Get daily nutrition summary with macro and micronutrient totals.
+ 342: 
+ 343:     Returns calorie, protein, carb, fat, fiber totals and micronutrients
+ 344:     for the given day.
  345: 
- 346: 
- 347: @mcp.tool(
- 348:     annotations={
- 349:         "readOnlyHint": True,
- 350:         "destructiveHint": False,
- 351:         "idempotentHint": True,
- 352:         "openWorldHint": True,
- 353:     }
- 354: )
- 355: def get_nutrition_scores(date: str | None = None) -> str:
- 356:     """Get nutrition scores with per-nutrient consumed amounts and category grades.
- 357: 
- 358:     Returns category scores (All Targets, Vitamins, Minerals, Electrolytes,
- 359:     Antioxidants, Immune Support, Metabolism, Bone Health) with the actual
- 360:     consumed amount and confidence level for each tracked nutrient.
+ 346:     Args:
+ 347:         date: Date as YYYY-MM-DD (defaults to today).
+ 348:     """
+ 349:     try:
+ 350:         client = _get_client()
+ 351:         day = _parse_date(date)
+ 352:         data = client.get_nutrients(day)
+ 353:         return _ok(
+ 354:             {
+ 355:                 "date": date or str(date_module_today()),
+ 356:                 "nutrients": data,
+ 357:             }
+ 358:         )
+ 359:     except Exception as e:
+ 360:         return _err(e)
  361: 
- 362:     This is the richest nutrition endpoint -- use it when you need to know
- 363:     both how much of each nutrient was consumed AND how close each is to
- 364:     the target.
- 365: 
- 366:     Args:
- 367:         date: Date as YYYY-MM-DD (defaults to today).
- 368:     """
- 369:     try:
- 370:         client = _get_client()
- 371:         day = _parse_date(date)
- 372:         data = client.get_nutrition_scores(day)
- 373:         return _ok(
- 374:             {
- 375:                 "date": date or str(date_module_today()),
- 376:                 "scores": data,
- 377:             }
- 378:         )
- 379:     except Exception as e:
- 380:         return _err(e)
+ 362: 
+ 363: @mcp.tool(
+ 364:     annotations={
+ 365:         "readOnlyHint": True,
+ 366:         "destructiveHint": False,
+ 367:         "idempotentHint": True,
+ 368:         "openWorldHint": True,
+ 369:     }
+ 370: )
+ 371: def get_nutrition_scores(date: str | None = None) -> str:
+ 372:     """Get nutrition scores with per-nutrient consumed amounts and category grades.
+ 373: 
+ 374:     Returns category scores (All Targets, Vitamins, Minerals, Electrolytes,
+ 375:     Antioxidants, Immune Support, Metabolism, Bone Health) with the actual
+ 376:     consumed amount and confidence level for each tracked nutrient.
+ 377: 
+ 378:     This is the richest nutrition endpoint -- use it when you need to know
+ 379:     both how much of each nutrient was consumed AND how close each is to
+ 380:     the target.
  381: 
- 382: 
- 383: # ------------------------------------------------------------------
- 384: # Food search and details
- 385: # ------------------------------------------------------------------
- 386: 
- 387: 
- 388: @mcp.tool(
- 389:     annotations={
- 390:         "readOnlyHint": True,
- 391:         "destructiveHint": False,
- 392:         "idempotentHint": True,
- 393:         "openWorldHint": True,
- 394:     }
- 395: )
- 396: def search_foods(query: str) -> str:
- 397:     """Search Cronometer's food database by name.
+ 382:     Args:
+ 383:         date: Date as YYYY-MM-DD (defaults to today).
+ 384:     """
+ 385:     try:
+ 386:         client = _get_client()
+ 387:         day = _parse_date(date)
+ 388:         data = client.get_nutrition_scores(day)
+ 389:         return _ok(
+ 390:             {
+ 391:                 "date": date or str(date_module_today()),
+ 392:                 "scores": data,
+ 393:             }
+ 394:         )
+ 395:     except Exception as e:
+ 396:         return _err(e)
+ 397: 
  398: 
- 399:     Returns matching foods with their IDs and source information.
- 400:     Use the food_id and measure_id from results with add_food_entry,
- 401:     or pass food_id to get_food_details for full nutrition info.
+ 399: # ------------------------------------------------------------------
+ 400: # Food search and details
+ 401: # ------------------------------------------------------------------
  402: 
- 403:     Args:
- 404:         query: Food name or keyword (e.g. "eggs", "chicken breast").
- 405:     """
- 406:     try:
- 407:         client = _get_client()
- 408:         foods = client.search_food(query)
- 409: 
- 410:         # Slim down results to the most useful fields
- 411:         results = []
- 412:         for f in foods:
- 413:             results.append(
- 414:                 {
- 415:                     "food_id": f.get("id"),
- 416:                     "name": f.get("name"),
- 417:                     "source": f.get("source"),
- 418:                     "measure_id": f.get("measureId"),
- 419:                     "translation_id": f.get("translationId"),
- 420:                     "measure_display": f.get("measureDisplayName"),
- 421:                     "score": f.get("score"),
- 422:                 }
- 423:             )
- 424: 
- 425:         return _ok(
- 426:             {
- 427:                 "query": query,
- 428:                 "count": len(results),
- 429:                 "foods": results,
- 430:             }
- 431:         )
- 432:     except Exception as e:
- 433:         return _err(e)
- 434: 
- 435: 
- 436: @mcp.tool(
- 437:     annotations={
- 438:         "readOnlyHint": True,
- 439:         "destructiveHint": False,
- 440:         "idempotentHint": True,
- 441:         "openWorldHint": True,
- 442:     }
- 443: )
- 444: def get_food_details(food_id: int) -> str:
- 445:     """Get detailed food information including nutrition and serving sizes.
- 446: 
- 447:     Use this after search_foods to get the full nutrient profile and
- 448:     available measure_ids needed for add_food_entry.
- 449: 
- 450:     Args:
- 451:         food_id: Food ID from search_foods results.
- 452:     """
- 453:     try:
- 454:         client = _get_client()
- 455:         data = client.get_food(food_id)
- 456: 
- 457:         # Extract measures for easy reference
- 458:         measures = []
- 459:         for m in data.get("measures", []):
- 460:             measures.append(
- 461:                 {
- 462:                     "measure_id": m.get("id"),
- 463:                     "name": m.get("name"),
- 464:                     "grams": m.get("value"),
- 465:                 }
- 466:             )
- 467: 
- 468:         return _ok(
- 469:             {
- 470:                 "food_id": data.get("id"),
- 471:                 "name": data.get("name"),
- 472:                 "default_measure_id": data.get("defaultMeasureId"),
- 473:                 "measures": measures,
- 474:                 "nutrients": data.get("nutrients", []),
- 475:             }
- 476:         )
- 477:     except Exception as e:
- 478:         return _err(e)
- 479: 
- 480: 
- 481: # ------------------------------------------------------------------
- 482: # Custom food creation
- 483: # ------------------------------------------------------------------
- 484: 
- 485: 
- 486: @mcp.tool(
- 487:     annotations={
- 488:         "readOnlyHint": False,
- 489:         "destructiveHint": False,
- 490:         "idempotentHint": False,
- 491:         "openWorldHint": True,
- 492:     }
- 493: )
- 494: def add_custom_food(
- 495:     name: str,
- 496:     calories: float,
- 497:     protein_g: float,
- 498:     fat_g: float,
- 499:     carbs_g: float,
- 500:     fiber_g: float = 0,
- 501:     sugar_g: float = 0,
- 502:     sodium_mg: float = 0,
- 503:     serving_name: str = "1 serving",
- 504:     serving_grams: float = 100.0,
- 505: ) -> str:
- 506:     """Create a custom food in Cronometer with specified nutrition.
- 507: 
- 508:     Nutrient amounts should be for the full serving size specified.
- 509:     After creation, use the returned food_id with add_food_entry to log it.
- 510: 
- 511:     Args:
- 512:         name: Food name.
- 513:         calories: Calories per serving (kcal).
- 514:         protein_g: Protein per serving (g).
- 515:         fat_g: Fat per serving (g).
- 516:         carbs_g: Carbs per serving (g).
- 517:         fiber_g: Fiber per serving (g, default 0).
- 518:         sugar_g: Sugar per serving (g, default 0).
- 519:         sodium_mg: Sodium per serving (mg, default 0).
- 520:         serving_name: Name for the serving size (default "1 serving").
- 521:         serving_grams: Weight of one serving in grams (default 100).
- 522:     """
- 523:     try:
- 524:         client = _get_client()
- 525:         result = client.create_custom_food(
- 526:             name,
- 527:             calories=calories,
- 528:             protein_g=protein_g,
- 529:             fat_g=fat_g,
- 530:             carbs_g=carbs_g,
- 531:             fiber_g=fiber_g,
- 532:             sugar_g=sugar_g,
- 533:             sodium_mg=sodium_mg,
- 534:             serving_name=serving_name,
- 535:             serving_grams=serving_grams,
- 536:         )
- 537: 
- 538:         # Fetch back to get the server-assigned measure_id
- 539:         food_data = client.get_food(result["food_id"])
- 540:         result["measure_id"] = food_data.get("defaultMeasureId")
- 541: 
- 542:         return _ok(
- 543:             {
- 544:                 "food_id": result["food_id"],
- 545:                 "measure_id": result["measure_id"],
- 546:                 "name": name,
- 547:                 "note": "Use food_id and measure_id with add_food_entry to log this food.",
- 548:             }
- 549:         )
- 550:     except Exception as e:
- 551:         return _err(e)
- 552: 
+ 403: 
+ 404: @mcp.tool(
+ 405:     annotations={
+ 406:         "readOnlyHint": True,
+ 407:         "destructiveHint": False,
+ 408:         "idempotentHint": True,
+ 409:         "openWorldHint": True,
+ 410:     }
+ 411: )
+ 412: def search_foods(query: str) -> str:
+ 413:     """Search Cronometer's food database by name.
+ 414: 
+ 415:     Returns matching foods with their IDs and source information.
+ 416:     Use the food_id and measure_id from results with add_food_entry,
+ 417:     or pass food_id to get_food_details for full nutrition info.
+ 418: 
+ 419:     Args:
+ 420:         query: Food name or keyword (e.g. "eggs", "chicken breast").
+ 421:     """
+ 422:     try:
+ 423:         client = _get_client()
+ 424:         foods = client.search_food(query)
+ 425: 
+ 426:         # Slim down results to the most useful fields
+ 427:         results = []
+ 428:         for f in foods:
+ 429:             results.append(
+ 430:                 {
+ 431:                     "food_id": f.get("id"),
+ 432:                     "name": f.get("name"),
+ 433:                     "source": f.get("source"),
+ 434:                     "measure_id": f.get("measureId"),
+ 435:                     "translation_id": f.get("translationId"),
+ 436:                     "measure_display": f.get("measureDisplayName"),
+ 437:                     "score": f.get("score"),
+ 438:                 }
+ 439:             )
+ 440: 
+ 441:         return _ok(
+ 442:             {
+ 443:                 "query": query,
+ 444:                 "count": len(results),
+ 445:                 "foods": results,
+ 446:             }
+ 447:         )
+ 448:     except Exception as e:
+ 449:         return _err(e)
+ 450: 
+ 451: 
+ 452: @mcp.tool(
+ 453:     annotations={
+ 454:         "readOnlyHint": True,
+ 455:         "destructiveHint": False,
+ 456:         "idempotentHint": True,
+ 457:         "openWorldHint": True,
+ 458:     }
+ 459: )
+ 460: def get_food_details(food_id: int) -> str:
+ 461:     """Get detailed food information including nutrition and serving sizes.
+ 462: 
+ 463:     Use this after search_foods to get the full nutrient profile and
+ 464:     available measure_ids needed for add_food_entry.
+ 465: 
+ 466:     Args:
+ 467:         food_id: Food ID from search_foods results.
+ 468:     """
+ 469:     try:
+ 470:         client = _get_client()
+ 471:         data = client.get_food(food_id)
+ 472: 
+ 473:         # Extract measures for easy reference
+ 474:         measures = []
+ 475:         for m in data.get("measures", []):
+ 476:             measures.append(
+ 477:                 {
+ 478:                     "measure_id": m.get("id"),
+ 479:                     "name": m.get("name"),
+ 480:                     "grams": m.get("value"),
+ 481:                 }
+ 482:             )
+ 483: 
+ 484:         return _ok(
+ 485:             {
+ 486:                 "food_id": data.get("id"),
+ 487:                 "name": data.get("name"),
+ 488:                 "default_measure_id": data.get("defaultMeasureId"),
+ 489:                 "measures": measures,
+ 490:                 "nutrients": data.get("nutrients", []),
+ 491:             }
+ 492:         )
+ 493:     except Exception as e:
+ 494:         return _err(e)
+ 495: 
+ 496: 
+ 497: # ------------------------------------------------------------------
+ 498: # Custom food creation
+ 499: # ------------------------------------------------------------------
+ 500: 
+ 501: 
+ 502: @mcp.tool(
+ 503:     annotations={
+ 504:         "readOnlyHint": False,
+ 505:         "destructiveHint": False,
+ 506:         "idempotentHint": False,
+ 507:         "openWorldHint": True,
+ 508:     }
+ 509: )
+ 510: def add_custom_food(
+ 511:     name: str,
+ 512:     calories: float,
+ 513:     protein_g: float,
+ 514:     fat_g: float,
+ 515:     carbs_g: float,
+ 516:     fiber_g: float = 0,
+ 517:     sugar_g: float = 0,
+ 518:     sodium_mg: float = 0,
+ 519:     serving_name: str = "1 serving",
+ 520:     serving_grams: float = 100.0,
+ 521: ) -> str:
+ 522:     """Create a custom food in Cronometer with specified nutrition.
+ 523: 
+ 524:     Nutrient amounts should be for the full serving size specified.
+ 525:     After creation, use the returned food_id with add_food_entry to log it.
+ 526: 
+ 527:     Args:
+ 528:         name: Food name.
+ 529:         calories: Calories per serving (kcal).
+ 530:         protein_g: Protein per serving (g).
+ 531:         fat_g: Fat per serving (g).
+ 532:         carbs_g: Carbs per serving (g).
+ 533:         fiber_g: Fiber per serving (g, default 0).
+ 534:         sugar_g: Sugar per serving (g, default 0).
+ 535:         sodium_mg: Sodium per serving (mg, default 0).
+ 536:         serving_name: Name for the serving size (default "1 serving").
+ 537:         serving_grams: Weight of one serving in grams (default 100).
+ 538:     """
+ 539:     try:
+ 540:         client = _get_client()
+ 541:         result = client.create_custom_food(
+ 542:             name,
+ 543:             calories=calories,
+ 544:             protein_g=protein_g,
+ 545:             fat_g=fat_g,
+ 546:             carbs_g=carbs_g,
+ 547:             fiber_g=fiber_g,
+ 548:             sugar_g=sugar_g,
+ 549:             sodium_mg=sodium_mg,
+ 550:             serving_name=serving_name,
+ 551:             serving_grams=serving_grams,
+ 552:         )
  553: 
- 554: # ------------------------------------------------------------------
- 555: # Macro targets
- 556: # ------------------------------------------------------------------
+ 554:         # Fetch back to get the server-assigned measure_id
+ 555:         food_data = client.get_food(result["food_id"])
+ 556:         result["measure_id"] = food_data.get("defaultMeasureId")
  557: 
- 558: 
- 559: @mcp.tool(
- 560:     annotations={
- 561:         "readOnlyHint": True,
- 562:         "destructiveHint": False,
- 563:         "idempotentHint": True,
- 564:         "openWorldHint": True,
- 565:     }
- 566: )
- 567: def get_macro_targets() -> str:
- 568:     """Get current macro targets including weekly schedule and templates.
+ 558:         return _ok(
+ 559:             {
+ 560:                 "food_id": result["food_id"],
+ 561:                 "measure_id": result["measure_id"],
+ 562:                 "name": name,
+ 563:                 "note": "Use food_id and measure_id with add_food_entry to log this food.",
+ 564:             }
+ 565:         )
+ 566:     except Exception as e:
+ 567:         return _err(e)
+ 568: 
  569: 
- 570:     Returns the weekly macro schedule (which template applies to each day)
- 571:     and all saved macro target templates with their values.
- 572:     """
- 573:     try:
- 574:         client = _get_client()
- 575:         schedules = client.get_macro_schedules()
- 576:         templates = client.get_macro_target_templates()
- 577:         return _ok(
- 578:             {
- 579:                 "schedules": schedules,
- 580:                 "templates": templates,
- 581:             }
- 582:         )
- 583:     except Exception as e:
- 584:         return _err(e)
+ 570: # ------------------------------------------------------------------
+ 571: # Macro targets
+ 572: # ------------------------------------------------------------------
+ 573: 
+ 574: 
+ 575: @mcp.tool(
+ 576:     annotations={
+ 577:         "readOnlyHint": True,
+ 578:         "destructiveHint": False,
+ 579:         "idempotentHint": True,
+ 580:         "openWorldHint": True,
+ 581:     }
+ 582: )
+ 583: def get_macro_targets() -> str:
+ 584:     """Get current macro targets including weekly schedule and templates.
  585: 
- 586: 
- 587: # ------------------------------------------------------------------
- 588: # Fasting
- 589: # ------------------------------------------------------------------
- 590: 
- 591: 
- 592: @mcp.tool(
- 593:     annotations={
- 594:         "readOnlyHint": True,
- 595:         "destructiveHint": False,
- 596:         "idempotentHint": True,
- 597:         "openWorldHint": True,
- 598:     }
- 599: )
- 600: def get_fasting_history(
- 601:     start_date: str | None = None,
- 602:     end_date: str | None = None,
- 603: ) -> str:
- 604:     """Get fasting history from Cronometer.
- 605: 
- 606:     Returns fasts within the date range including status, timestamps,
- 607:     and duration.
- 608: 
- 609:     Args:
- 610:         start_date: Start date as YYYY-MM-DD (defaults to 30 days ago).
- 611:         end_date: End date as YYYY-MM-DD (defaults to today).
- 612:     """
- 613:     try:
- 614:         client = _get_client()
- 615:         start = _parse_date(start_date)
- 616:         end = _parse_date(end_date)
- 617:         data = client.get_fasting_with_date_range(start, end)
- 618:         return _ok(
- 619:             {
- 620:                 "start_date": start_date or str(date.today() - timedelta(days=30)),
- 621:                 "end_date": end_date or str(date.today()),
- 622:                 "fasting": data,
- 623:             }
- 624:         )
- 625:     except Exception as e:
- 626:         return _err(e)
- 627: 
- 628: 
- 629: @mcp.tool(
- 630:     annotations={
- 631:         "readOnlyHint": True,
- 632:         "destructiveHint": False,
- 633:         "idempotentHint": True,
- 634:         "openWorldHint": True,
- 635:     }
- 636: )
- 637: def get_fasting_stats() -> str:
- 638:     """Get aggregate fasting statistics.
- 639: 
- 640:     Returns total fasting hours, longest fast, average fast duration,
- 641:     and completed fast count.
- 642:     """
- 643:     try:
- 644:         client = _get_client()
- 645:         data = client.get_fasting_stats()
- 646:         return _ok({"stats": data})
- 647:     except Exception as e:
- 648:         return _err(e)
- 649: 
- 650: 
- 651: # ------------------------------------------------------------------
- 652: # Helpers
- 653: # ------------------------------------------------------------------
- 654: 
+ 586:     Returns the weekly macro schedule (which template applies to each day)
+ 587:     and all saved macro target templates with their values.
+ 588:     """
+ 589:     try:
+ 590:         client = _get_client()
+ 591:         schedules = client.get_macro_schedules()
+ 592:         templates = client.get_macro_target_templates()
+ 593:         return _ok(
+ 594:             {
+ 595:                 "schedules": schedules,
+ 596:                 "templates": templates,
+ 597:             }
+ 598:         )
+ 599:     except Exception as e:
+ 600:         return _err(e)
+ 601: 
+ 602: 
+ 603: # ------------------------------------------------------------------
+ 604: # Fasting
+ 605: # ------------------------------------------------------------------
+ 606: 
+ 607: 
+ 608: @mcp.tool(
+ 609:     annotations={
+ 610:         "readOnlyHint": True,
+ 611:         "destructiveHint": False,
+ 612:         "idempotentHint": True,
+ 613:         "openWorldHint": True,
+ 614:     }
+ 615: )
+ 616: def get_fasting_history(
+ 617:     start_date: str | None = None,
+ 618:     end_date: str | None = None,
+ 619: ) -> str:
+ 620:     """Get fasting history from Cronometer.
+ 621: 
+ 622:     Returns fasts within the date range including status, timestamps,
+ 623:     and duration.
+ 624: 
+ 625:     Args:
+ 626:         start_date: Start date as YYYY-MM-DD (defaults to 30 days ago).
+ 627:         end_date: End date as YYYY-MM-DD (defaults to today).
+ 628:     """
+ 629:     try:
+ 630:         client = _get_client()
+ 631:         start = _parse_date(start_date)
+ 632:         end = _parse_date(end_date)
+ 633:         data = client.get_fasting_with_date_range(start, end)
+ 634:         return _ok(
+ 635:             {
+ 636:                 "start_date": start_date or str(date.today() - timedelta(days=30)),
+ 637:                 "end_date": end_date or str(date.today()),
+ 638:                 "fasting": data,
+ 639:             }
+ 640:         )
+ 641:     except Exception as e:
+ 642:         return _err(e)
+ 643: 
+ 644: 
+ 645: @mcp.tool(
+ 646:     annotations={
+ 647:         "readOnlyHint": True,
+ 648:         "destructiveHint": False,
+ 649:         "idempotentHint": True,
+ 650:         "openWorldHint": True,
+ 651:     }
+ 652: )
+ 653: def get_fasting_stats() -> str:
+ 654:     """Get aggregate fasting statistics.
  655: 
- 656: def date_module_today() -> date:
- 657:     """Return today's date (extracted for easy mocking in tests)."""
- 658:     return date.today()
- 659: 
- 660: 
- 661: # ------------------------------------------------------------------
- 662: # OAuth 2.1 Authorization Code + PKCE for remote transports
- 663: # ------------------------------------------------------------------
- 664: 
+ 656:     Returns total fasting hours, longest fast, average fast duration,
+ 657:     and completed fast count.
+ 658:     """
+ 659:     try:
+ 660:         client = _get_client()
+ 661:         data = client.get_fasting_stats()
+ 662:         return _ok({"stats": data})
+ 663:     except Exception as e:
+ 664:         return _err(e)
  665: 
- 666: class OAuthAuthorizationMiddleware:
- 667:     """ASGI middleware implementing OAuth 2.1 authorization code flow with PKCE.
- 668: 
- 669:     This is a minimal single-user OAuth server that satisfies Claude.ai's
- 670:     MCP connector requirements. It implements:
+ 666: 
+ 667: # ------------------------------------------------------------------
+ 668: # Helpers
+ 669: # ------------------------------------------------------------------
+ 670: 
  671: 
- 672:     - GET /.well-known/oauth-authorization-server → server metadata (RFC 8414)
- 673:     - GET /.well-known/oauth-protected-resource → resource metadata
- 674:     - GET /authorize → authorization page (user clicks to approve)
- 675:     - POST /token → authorization code → access token exchange (with PKCE)
- 676:     - Bearer token validation on all other HTTP requests
- 677: 
- 678:     Auth codes are single-use and short-lived (in-memory, lost on restart).
- 679:     Since this is a single-user server, the "authorization" is just confirming
- 680:     you're the server owner.
+ 672: def date_module_today() -> date:
+ 673:     """Return today's date (extracted for easy mocking in tests)."""
+ 674:     return date.today()
+ 675: 
+ 676: 
+ 677: # ------------------------------------------------------------------
+ 678: # OAuth 2.1 Authorization Code + PKCE for remote transports
+ 679: # ------------------------------------------------------------------
+ 680: 
  681: 
- 682:     Env vars:
- 683:     - MCP_OAUTH_CLIENT_ID: Expected client_id from Claude.ai
- 684:     - MCP_OAUTH_CLIENT_SECRET: Expected client_secret from Claude.ai
- 685:     - MCP_AUTH_TOKEN: The access token issued and validated
- 686:     - MCP_BASE_URL: Public base URL (for metadata endpoints)
- 687:     """
- 688: 
- 689:     def __init__(
- 690:         self,
- 691:         app,
- 692:         *,
- 693:         client_id: str,
- 694:         client_secret: str,
- 695:         access_token: str,
- 696:         base_url: str = "",
- 697:     ):
- 698:         self.app = app
- 699:         self.client_id = client_id
- 700:         self.client_secret = client_secret
- 701:         self.access_token = access_token
- 702:         self.base_url = base_url.rstrip("/")
- 703:         # In-memory store for pending auth codes: code -> {code_challenge, redirect_uri, state}
- 704:         self._pending_codes: dict[str, dict] = {}
- 705: 
- 706:     async def __call__(self, scope, receive, send):
- 707:         if scope["type"] != "http":
- 708:             await self.app(scope, receive, send)
- 709:             return
- 710: 
- 711:         path = scope.get("path", "")
- 712:         method = scope.get("method", "GET")
- 713: 
- 714:         # OAuth metadata discovery (RFC 8414)
- 715:         if path == "/.well-known/oauth-authorization-server" and method == "GET":
- 716:             from starlette.responses import JSONResponse
- 717: 
- 718:             response = JSONResponse(
- 719:                 {
- 720:                     "issuer": self.base_url,
- 721:                     "authorization_endpoint": f"{self.base_url}/authorize",
- 722:                     "token_endpoint": f"{self.base_url}/token",
- 723:                     "registration_endpoint": f"{self.base_url}/register",
- 724:                     "token_endpoint_auth_methods_supported": [
- 725:                         "client_secret_post",
- 726:                     ],
- 727:                     "grant_types_supported": [
- 728:                         "authorization_code",
- 729:                     ],
- 730:                     "response_types_supported": ["code"],
- 731:                     "code_challenge_methods_supported": ["S256"],
- 732:                     "scopes_supported": ["mcp"],
- 733:                 }
- 734:             )
- 735:             await response(scope, receive, send)
- 736:             return
- 737: 
- 738:         # OAuth Protected Resource metadata
- 739:         if path == "/.well-known/oauth-protected-resource" and method == "GET":
- 740:             from starlette.responses import JSONResponse
- 741: 
- 742:             response = JSONResponse(
- 743:                 {
- 744:                     "resource": self.base_url,
- 745:                     "authorization_servers": [self.base_url],
- 746:                     "scopes_supported": ["mcp"],
- 747:                 }
- 748:             )
- 749:             await response(scope, receive, send)
- 750:             return
- 751: 
- 752:         # Dynamic client registration (stub -- just echoes back the client_id)
- 753:         if path == "/register" and method == "POST":
- 754:             await self._handle_register(scope, receive, send)
- 755:             return
- 756: 
- 757:         # Authorization endpoint
- 758:         if path == "/authorize" and method == "GET":
- 759:             await self._handle_authorize(scope, receive, send)
- 760:             return
- 761: 
- 762:         # Authorize form submission
- 763:         if path == "/authorize" and method == "POST":
- 764:             await self._handle_authorize_submit(scope, receive, send)
- 765:             return
+ 682: class OAuthAuthorizationMiddleware:
+ 683:     """ASGI middleware implementing OAuth 2.1 authorization code flow with PKCE.
+ 684: 
+ 685:     This is a minimal single-user OAuth server that satisfies Claude.ai's
+ 686:     MCP connector requirements. It implements:
+ 687: 
+ 688:     - GET /.well-known/oauth-authorization-server → server metadata (RFC 8414)
+ 689:     - GET /.well-known/oauth-protected-resource → resource metadata
+ 690:     - GET /authorize → authorization page (user clicks to approve)
+ 691:     - POST /token → authorization code → access token exchange (with PKCE)
+ 692:     - Bearer token validation on all other HTTP requests
+ 693: 
+ 694:     Auth codes are single-use and short-lived (in-memory, lost on restart).
+ 695:     Since this is a single-user server, the "authorization" is just confirming
+ 696:     you're the server owner.
+ 697: 
+ 698:     Env vars:
+ 699:     - MCP_OAUTH_CLIENT_ID: Expected client_id from Claude.ai
+ 700:     - MCP_OAUTH_CLIENT_SECRET: Expected client_secret from Claude.ai
+ 701:     - MCP_AUTH_TOKEN: The access token issued and validated
+ 702:     - MCP_BASE_URL: Public base URL (for metadata endpoints)
+ 703:     """
+ 704: 
+ 705:     def __init__(
+ 706:         self,
+ 707:         app,
+ 708:         *,
+ 709:         client_id: str,
+ 710:         client_secret: str,
+ 711:         access_token: str,
+ 712:         approve_secret: str,
+ 713:         base_url: str = "",
+ 714:     ):
+ 715:         self.app = app
+ 716:         self.client_id = client_id
+ 717:         self.client_secret = client_secret
+ 718:         self.access_token = access_token
+ 719:         self.approve_secret = approve_secret
+ 720:         self.base_url = base_url.rstrip("/")
+ 721:         # In-memory store for pending auth codes: code -> {code_challenge, redirect_uri, state, created_at}
+ 722:         self._pending_codes: dict[str, dict] = {}
+ 723:         # Per-IP failed approve-secret attempts: ip -> {count, reset_at}
+ 724:         self._auth_attempts: dict[str, dict] = {}
+ 725: 
+ 726:     def _cleanup_expired(self) -> None:
+ 727:         """Lazy eviction of expired pending codes and stale rate-limit entries."""
+ 728:         now = time.monotonic()
+ 729:         for code in [
+ 730:             c for c, meta in self._pending_codes.items()
+ 731:             if now - meta.get("created_at", 0) > CODE_TTL_S
+ 732:         ]:
+ 733:             self._pending_codes.pop(code, None)
+ 734:         for ip in [
+ 735:             i for i, entry in self._auth_attempts.items()
+ 736:             if now > entry.get("reset_at", 0)
+ 737:         ]:
+ 738:             self._auth_attempts.pop(ip, None)
+ 739: 
+ 740:     def _client_ip(self, scope, headers) -> str:
+ 741:         """Best-effort client IP, proxy-aware.
+ 742: 
+ 743:         Railway's edge appends the real client IP as the LAST entry of
+ 744:         X-Forwarded-For. The left-most entries are client-supplied and
+ 745:         spoofable, so we deliberately take the last one. This assumes a
+ 746:         single trusted hop (Railway edge). If this ever runs behind an
+ 747:         additional proxy (e.g. Cloudflare -> Railway), this index must change.
+ 748:         """
+ 749:         xff = headers.get(b"x-forwarded-for", b"").decode()
+ 750:         if xff:
+ 751:             return xff.split(",")[-1].strip()
+ 752:         client = scope.get("client")
+ 753:         return client[0] if client else "unknown"
+ 754: 
+ 755:     async def __call__(self, scope, receive, send):
+ 756:         if scope["type"] != "http":
+ 757:             await self.app(scope, receive, send)
+ 758:             return
+ 759: 
+ 760:         path = scope.get("path", "")
+ 761:         method = scope.get("method", "GET")
+ 762: 
+ 763:         # OAuth metadata discovery (RFC 8414)
+ 764:         if path == "/.well-known/oauth-authorization-server" and method == "GET":
+ 765:             from starlette.responses import JSONResponse
  766: 
- 767:         # Token endpoint
- 768:         if path == "/token" and method == "POST":
- 769:             await self._handle_token(scope, receive, send)
- 770:             return
- 771: 
- 772:         # Favicon (don't 401 on this during authorize page load)
- 773:         if path == "/favicon.ico":
- 774:             from starlette.responses import Response
- 775: 
- 776:             await Response(status_code=404)(scope, receive, send)
- 777:             return
- 778: 
- 779:         # All other requests: validate bearer token
- 780:         headers = dict(scope.get("headers", []))
- 781:         auth_value = headers.get(b"authorization", b"").decode()
- 782:         if auth_value != f"Bearer {self.access_token}":
- 783:             from starlette.responses import Response
- 784: 
- 785:             # Return 401 with WWW-Authenticate header per MCP spec
- 786:             response = Response(
- 787:                 content='{"error": "unauthorized"}',
- 788:                 status_code=401,
- 789:                 headers={
- 790:                     "WWW-Authenticate": "Bearer",
- 791:                     "Content-Type": "application/json",
- 792:                 },
- 793:             )
- 794:             await response(scope, receive, send)
- 795:             return
- 796: 
- 797:         await self.app(scope, receive, send)
- 798: 
- 799:     async def _handle_register(self, scope, receive, send):
- 800:         """Handle POST /register (OAuth 2.0 Dynamic Client Registration).
- 801: 
- 802:         Minimal implementation that accepts any registration and returns
- 803:         the provided client_name with pre-configured credentials.
- 804:         """
- 805:         from starlette.responses import JSONResponse
- 806: 
- 807:         body = await self._read_body(receive)
- 808:         try:
- 809:             import json as _json
+ 767:             response = JSONResponse(
+ 768:                 {
+ 769:                     "issuer": self.base_url,
+ 770:                     "authorization_endpoint": f"{self.base_url}/authorize",
+ 771:                     "token_endpoint": f"{self.base_url}/token",
+ 772:                     "registration_endpoint": f"{self.base_url}/register",
+ 773:                     "token_endpoint_auth_methods_supported": [
+ 774:                         "client_secret_post",
+ 775:                     ],
+ 776:                     "grant_types_supported": [
+ 777:                         "authorization_code",
+ 778:                     ],
+ 779:                     "response_types_supported": ["code"],
+ 780:                     "code_challenge_methods_supported": ["S256"],
+ 781:                     "scopes_supported": ["mcp"],
+ 782:                 }
+ 783:             )
+ 784:             await response(scope, receive, send)
+ 785:             return
+ 786: 
+ 787:         # OAuth Protected Resource metadata
+ 788:         if path == "/.well-known/oauth-protected-resource" and method == "GET":
+ 789:             from starlette.responses import JSONResponse
+ 790: 
+ 791:             response = JSONResponse(
+ 792:                 {
+ 793:                     "resource": self.base_url,
+ 794:                     "authorization_servers": [self.base_url],
+ 795:                     "scopes_supported": ["mcp"],
+ 796:                 }
+ 797:             )
+ 798:             await response(scope, receive, send)
+ 799:             return
+ 800: 
+ 801:         # Dynamic client registration (stub -- just echoes back the client_id)
+ 802:         if path == "/register" and method == "POST":
+ 803:             await self._handle_register(scope, receive, send)
+ 804:             return
+ 805: 
+ 806:         # Authorization endpoint
+ 807:         if path == "/authorize" and method == "GET":
+ 808:             await self._handle_authorize(scope, receive, send)
+ 809:             return
  810: 
- 811:             data = _json.loads(body)
- 812:         except Exception:
- 813:             data = {}
- 814: 
- 815:         response = JSONResponse(
- 816:             {
- 817:                 "client_id": self.client_id,
- 818:                 "client_secret": self.client_secret,
- 819:                 "client_name": data.get("client_name", "mcp-client"),
- 820:                 "redirect_uris": data.get("redirect_uris", []),
- 821:                 "grant_types": ["authorization_code"],
- 822:                 "response_types": ["code"],
- 823:                 "token_endpoint_auth_method": "client_secret_post",
- 824:             },
- 825:             status_code=201,
- 826:         )
- 827:         await response(scope, receive, send)
- 828: 
- 829:     async def _handle_authorize(self, scope, receive, send):
- 830:         """Handle GET /authorize -- show a simple approval page."""
- 831:         from starlette.responses import HTMLResponse
- 832:         from urllib.parse import parse_qs
+ 811:         # Authorize form submission
+ 812:         if path == "/authorize" and method == "POST":
+ 813:             await self._handle_authorize_submit(scope, receive, send)
+ 814:             return
+ 815: 
+ 816:         # Token endpoint
+ 817:         if path == "/token" and method == "POST":
+ 818:             await self._handle_token(scope, receive, send)
+ 819:             return
+ 820: 
+ 821:         # Favicon (don't 401 on this during authorize page load)
+ 822:         if path == "/favicon.ico":
+ 823:             from starlette.responses import Response
+ 824: 
+ 825:             await Response(status_code=404)(scope, receive, send)
+ 826:             return
+ 827: 
+ 828:         # All other requests: validate bearer token
+ 829:         headers = dict(scope.get("headers", []))
+ 830:         auth_value = headers.get(b"authorization", b"").decode()
+ 831:         if not _safe_equal(auth_value, f"Bearer {self.access_token}"):
+ 832:             from starlette.responses import Response
  833: 
- 834:         query = scope.get("query_string", b"").decode()
- 835:         params = parse_qs(query)
- 836: 
- 837:         client_id = params.get("client_id", [None])[0]
- 838:         redirect_uri = params.get("redirect_uri", [None])[0]
- 839:         code_challenge = params.get("code_challenge", [None])[0]
- 840:         code_challenge_method = params.get("code_challenge_method", [None])[0]
- 841:         state = params.get("state", [None])[0]
- 842:         response_type = params.get("response_type", [None])[0]
- 843: 
- 844:         if response_type != "code" or not redirect_uri or not code_challenge:
- 845:             from starlette.responses import JSONResponse
- 846: 
- 847:             response = JSONResponse({"error": "invalid_request"}, status_code=400)
- 848:             await response(scope, receive, send)
- 849:             return
+ 834:             # Return 401 with WWW-Authenticate header per MCP spec
+ 835:             response = Response(
+ 836:                 content='{"error": "unauthorized"}',
+ 837:                 status_code=401,
+ 838:                 headers={
+ 839:                     "WWW-Authenticate": "Bearer",
+ 840:                     "Content-Type": "application/json",
+ 841:                 },
+ 842:             )
+ 843:             await response(scope, receive, send)
+ 844:             return
+ 845: 
+ 846:         await self.app(scope, receive, send)
+ 847: 
+ 848:     async def _handle_register(self, scope, receive, send):
+ 849:         """Handle POST /register (OAuth 2.0 Dynamic Client Registration).
  850: 
- 851:         # Render a simple approval page
- 852:         html = f"""<!DOCTYPE html>
- 853: <html>
- 854: <head>
- 855:     <title>Authorize MCP Access</title>
- 856:     <meta name="viewport" content="width=device-width, initial-scale=1">
- 857:     <style>
- 858:         body {{ font-family: system-ui, sans-serif; max-width: 480px; margin: 60px auto; padding: 20px; }}
- 859:         h1 {{ font-size: 1.4em; }}
- 860:         .info {{ background: #f0f4f8; padding: 16px; border-radius: 8px; margin: 20px 0; }}
- 861:         button {{ background: #2563eb; color: white; border: none; padding: 12px 32px;
- 862:                  border-radius: 6px; font-size: 16px; cursor: pointer; }}
- 863:         button:hover {{ background: #1d4ed8; }}
- 864:     </style>
- 865: </head>
- 866: <body>
- 867:     <h1>Authorize Cronometer MCP</h1>
- 868:     <div class="info">
- 869:         <p><strong>Client:</strong> {client_id or "unknown"}</p>
- 870:         <p>This will grant access to your Cronometer nutrition data
- 871:            through the MCP protocol.</p>
- 872:     </div>
- 873:     <form method="POST" action="/authorize">
- 874:         <input type="hidden" name="client_id" value="{client_id or ""}">
- 875:         <input type="hidden" name="redirect_uri" value="{redirect_uri or ""}">
- 876:         <input type="hidden" name="code_challenge" value="{code_challenge or ""}">
- 877:         <input type="hidden" name="code_challenge_method" value="{code_challenge_method or ""}">
- 878:         <input type="hidden" name="state" value="{state or ""}">
- 879:         <button type="submit">Authorize</button>
- 880:     </form>
- 881: </body>
- 882: </html>"""
- 883:         response = HTMLResponse(html)
- 884:         await response(scope, receive, send)
- 885: 
- 886:     async def _handle_authorize_submit(self, scope, receive, send):
- 887:         """Handle POST /authorize -- user approved, generate code and redirect."""
- 888:         from starlette.responses import RedirectResponse
- 889:         from urllib.parse import parse_qs, urlencode
- 890:         import secrets
- 891: 
- 892:         body = await self._read_body(receive)
- 893:         params = parse_qs(body.decode("utf-8"))
- 894: 
- 895:         redirect_uri = params.get("redirect_uri", [None])[0]
- 896:         code_challenge = params.get("code_challenge", [None])[0]
- 897:         code_challenge_method = params.get("code_challenge_method", [None])[0]
- 898:         state = params.get("state", [None])[0]
- 899: 
- 900:         if not redirect_uri or not code_challenge:
- 901:             from starlette.responses import JSONResponse
- 902: 
- 903:             response = JSONResponse({"error": "invalid_request"}, status_code=400)
- 904:             await response(scope, receive, send)
- 905:             return
- 906: 
- 907:         # Generate a one-time auth code
- 908:         code = secrets.token_urlsafe(32)
- 909:         self._pending_codes[code] = {
- 910:             "code_challenge": code_challenge,
- 911:             "code_challenge_method": code_challenge_method or "S256",
- 912:             "redirect_uri": redirect_uri,
- 913:         }
- 914: 
- 915:         # Redirect back to Claude.ai with the code
- 916:         callback_params = {"code": code}
- 917:         if state:
- 918:             callback_params["state"] = state
- 919:         separator = "&" if "?" in redirect_uri else "?"
- 920:         redirect_url = f"{redirect_uri}{separator}{urlencode(callback_params)}"
- 921: 
- 922:         response = RedirectResponse(url=redirect_url, status_code=302)
- 923:         await response(scope, receive, send)
- 924: 
- 925:     async def _handle_token(self, scope, receive, send):
- 926:         """Handle POST /token (authorization code exchange with PKCE)."""
- 927:         from starlette.responses import JSONResponse
- 928:         from urllib.parse import parse_qs
- 929:         import hashlib
- 930:         import base64
- 931: 
- 932:         body = await self._read_body(receive)
- 933:         try:
- 934:             params = parse_qs(body.decode("utf-8"))
- 935:         except Exception:
- 936:             response = JSONResponse({"error": "invalid_request"}, status_code=400)
- 937:             await response(scope, receive, send)
- 938:             return
- 939: 
- 940:         grant_type = params.get("grant_type", [None])[0]
- 941:         code = params.get("code", [None])[0]
- 942:         code_verifier = params.get("code_verifier", [None])[0]
+ 851:         Minimal implementation that accepts any registration and returns
+ 852:         the provided client_name with pre-configured credentials.
+ 853:         """
+ 854:         from starlette.responses import JSONResponse
+ 855: 
+ 856:         try:
+ 857:             body = await self._read_body(receive)
+ 858:         except ValueError:
+ 859:             from starlette.responses import Response
+ 860: 
+ 861:             await Response("Request body too large", status_code=413)(scope, receive, send)
+ 862:             return
+ 863:         try:
+ 864:             import json as _json
+ 865: 
+ 866:             data = _json.loads(body)
+ 867:         except Exception:
+ 868:             data = {}
+ 869: 
+ 870:         # Per RFC 7591: do NOT echo the client_secret back. client_secret_expires_at=0
+ 871:         # signals a non-expiring secret already known to the client. This avoids
+ 872:         # handing credentials to any anonymous caller of /register.
+ 873:         response = JSONResponse(
+ 874:             {
+ 875:                 "client_id": self.client_id,
+ 876:                 "client_secret_expires_at": 0,
+ 877:                 "client_name": data.get("client_name", "mcp-client"),
+ 878:                 "redirect_uris": data.get("redirect_uris", []),
+ 879:                 "grant_types": ["authorization_code"],
+ 880:                 "response_types": ["code"],
+ 881:                 "token_endpoint_auth_method": "client_secret_post",
+ 882:             },
+ 883:             status_code=201,
+ 884:         )
+ 885:         await response(scope, receive, send)
+ 886: 
+ 887:     def _render_approve_page(
+ 888:         self,
+ 889:         *,
+ 890:         client_id,
+ 891:         redirect_uri,
+ 892:         code_challenge,
+ 893:         code_challenge_method,
+ 894:         state,
+ 895:         error: str = "",
+ 896:     ) -> str:
+ 897:         """Render the approval page. Shared by GET and failed/throttled POST."""
+ 898:         e = _html_escape
+ 899:         err_html = f'<p class="err">{e(error)}</p>' if error else ""
+ 900:         return f"""<!DOCTYPE html>
+ 901: <html>
+ 902: <head>
+ 903:     <title>Authorize MCP Access</title>
+ 904:     <meta name="viewport" content="width=device-width, initial-scale=1">
+ 905:     <style>
+ 906:         body {{ font-family: system-ui, sans-serif; max-width: 480px; margin: 60px auto; padding: 20px; }}
+ 907:         h1 {{ font-size: 1.4em; }}
+ 908:         .info {{ background: #f0f4f8; padding: 16px; border-radius: 8px; margin: 20px 0; }}
+ 909:         .err {{ color: #b91c1c; font-weight: 600; margin: 8px 0; }}
+ 910:         label {{ display: block; margin: 16px 0 6px; font-weight: 600; }}
+ 911:         input[type=password] {{ width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box;
+ 912:                                 border: 1px solid #cbd5e1; border-radius: 6px; }}
+ 913:         button {{ background: #2563eb; color: white; border: none; padding: 12px 32px;
+ 914:                  border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 16px; }}
+ 915:         button:hover {{ background: #1d4ed8; }}
+ 916:     </style>
+ 917: </head>
+ 918: <body>
+ 919:     <h1>Authorize Cronometer MCP</h1>
+ 920:     <div class="info">
+ 921:         <p><strong>Client:</strong> {e(client_id) or "unknown"}</p>
+ 922:         <p>Enter the access secret to grant this client access to your
+ 923:            Cronometer nutrition data.</p>
+ 924:     </div>
+ 925:     {err_html}
+ 926:     <form method="POST" action="/authorize">
+ 927:         <input type="hidden" name="client_id" value="{e(client_id)}">
+ 928:         <input type="hidden" name="redirect_uri" value="{e(redirect_uri)}">
+ 929:         <input type="hidden" name="code_challenge" value="{e(code_challenge)}">
+ 930:         <input type="hidden" name="code_challenge_method" value="{e(code_challenge_method)}">
+ 931:         <input type="hidden" name="state" value="{e(state)}">
+ 932:         <label for="approve_secret">Access secret</label>
+ 933:         <input id="approve_secret" type="password" name="approve_secret" autocomplete="off" autofocus required>
+ 934:         <button type="submit">Authorize</button>
+ 935:     </form>
+ 936: </body>
+ 937: </html>"""
+ 938: 
+ 939:     async def _handle_authorize(self, scope, receive, send):
+ 940:         """Handle GET /authorize -- show the approval page (secret entered on POST)."""
+ 941:         from starlette.responses import HTMLResponse
+ 942:         from urllib.parse import parse_qs
  943: 
- 944:         if grant_type != "authorization_code":
- 945:             response = JSONResponse(
- 946:                 {"error": "unsupported_grant_type"}, status_code=400
- 947:             )
- 948:             await response(scope, receive, send)
- 949:             return
- 950: 
- 951:         if not code or not code_verifier:
- 952:             response = JSONResponse({"error": "invalid_request"}, status_code=400)
- 953:             await response(scope, receive, send)
- 954:             return
- 955: 
- 956:         # Look up and consume the auth code (single-use)
- 957:         pending = self._pending_codes.pop(code, None)
- 958:         if pending is None:
- 959:             response = JSONResponse({"error": "invalid_grant"}, status_code=400)
- 960:             await response(scope, receive, send)
- 961:             return
- 962: 
- 963:         # Validate PKCE: S256(code_verifier) must match code_challenge
- 964:         code_challenge = pending["code_challenge"]
- 965:         digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
- 966:         computed_challenge = (
- 967:             base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
- 968:         )
- 969: 
- 970:         if computed_challenge != code_challenge:
- 971:             response = JSONResponse(
- 972:                 {
- 973:                     "error": "invalid_grant",
- 974:                     "error_description": "PKCE verification failed",
- 975:                 },
- 976:                 status_code=400,
- 977:             )
- 978:             await response(scope, receive, send)
- 979:             return
- 980: 
- 981:         # Issue access token
- 982:         response = JSONResponse(
- 983:             {
- 984:                 "access_token": self.access_token,
- 985:                 "token_type": "bearer",
- 986:                 "scope": "mcp",
- 987:             }
- 988:         )
- 989:         await response(scope, receive, send)
- 990: 
- 991:     @staticmethod
- 992:     async def _read_body(receive) -> bytes:
- 993:         """Read the full request body from ASGI receive."""
- 994:         body = b""
- 995:         while True:
- 996:             message = await receive()
- 997:             body += message.get("body", b"")
- 998:             if not message.get("more_body", False):
- 999:                 break
-1000:         return body
-1001: 
-1002: 
-1003: # ------------------------------------------------------------------
-1004: # Entry point
-1005: # ------------------------------------------------------------------
-1006: 
-1007: 
-1008: def main():
-1009:     # Load .env for local development. No-op if the file is missing.
-1010:     # override=False keeps real environment variables (Docker, systemd,
-1011:     # MCP client `env` blocks, etc.) authoritative over .env.
-1012:     from dotenv import find_dotenv, load_dotenv
-1013: 
-1014:     dotenv_path = find_dotenv(usecwd=True)
-1015:     if dotenv_path and load_dotenv(dotenv_path, override=False):
-1016:         logger.info("Loaded .env from %s", dotenv_path)
+ 944:         query = scope.get("query_string", b"").decode()
+ 945:         params = parse_qs(query)
+ 946: 
+ 947:         client_id = params.get("client_id", [None])[0]
+ 948:         redirect_uri = params.get("redirect_uri", [None])[0]
+ 949:         code_challenge = params.get("code_challenge", [None])[0]
+ 950:         code_challenge_method = params.get("code_challenge_method", [None])[0]
+ 951:         state = params.get("state", [None])[0]
+ 952:         response_type = params.get("response_type", [None])[0]
+ 953: 
+ 954:         if response_type != "code" or not redirect_uri or not code_challenge:
+ 955:             from starlette.responses import JSONResponse
+ 956: 
+ 957:             response = JSONResponse({"error": "invalid_request"}, status_code=400)
+ 958:             await response(scope, receive, send)
+ 959:             return
+ 960: 
+ 961:         html = self._render_approve_page(
+ 962:             client_id=client_id,
+ 963:             redirect_uri=redirect_uri,
+ 964:             code_challenge=code_challenge,
+ 965:             code_challenge_method=code_challenge_method,
+ 966:             state=state,
+ 967:         )
+ 968:         response = HTMLResponse(html)
+ 969:         await response(scope, receive, send)
+ 970: 
+ 971:     async def _handle_authorize_submit(self, scope, receive, send):
+ 972:         """Handle POST /authorize -- validate the approve secret, then issue a code."""
+ 973:         from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
+ 974:         from urllib.parse import parse_qs, urlencode
+ 975:         import secrets
+ 976: 
+ 977:         try:
+ 978:             body = await self._read_body(receive)
+ 979:         except ValueError:
+ 980:             from starlette.responses import Response
+ 981: 
+ 982:             await Response("Request body too large", status_code=413)(scope, receive, send)
+ 983:             return
+ 984:         params = parse_qs(body.decode("utf-8"))
+ 985: 
+ 986:         redirect_uri = params.get("redirect_uri", [None])[0]
+ 987:         code_challenge = params.get("code_challenge", [None])[0]
+ 988:         code_challenge_method = params.get("code_challenge_method", [None])[0]
+ 989:         state = params.get("state", [None])[0]
+ 990:         client_id = params.get("client_id", [None])[0]
+ 991:         approve_secret = params.get("approve_secret", [None])[0]
+ 992: 
+ 993:         if not redirect_uri or not code_challenge:
+ 994:             response = JSONResponse({"error": "invalid_request"}, status_code=400)
+ 995:             await response(scope, receive, send)
+ 996:             return
+ 997: 
+ 998:         self._cleanup_expired()
+ 999: 
+1000:         headers = dict(scope.get("headers", []))
+1001:         ip = self._client_ip(scope, headers)
+1002:         now = time.monotonic()
+1003: 
+1004:         # Brute-force throttle: block before checking the secret.
+1005:         entry = self._auth_attempts.get(ip)
+1006:         if entry and now < entry["reset_at"] and entry["count"] >= MAX_AUTH_ATTEMPTS:
+1007:             html = self._render_approve_page(
+1008:                 client_id=client_id,
+1009:                 redirect_uri=redirect_uri,
+1010:                 code_challenge=code_challenge,
+1011:                 code_challenge_method=code_challenge_method,
+1012:                 state=state,
+1013:                 error="Too many attempts. Wait a minute and try again.",
+1014:             )
+1015:             await HTMLResponse(html, status_code=429)(scope, receive, send)
+1016:             return
 1017: 
-1018:     transport = os.getenv("MCP_TRANSPORT", "stdio")
-1019: 
-1020:     if transport == "stdio":
-1021:         mcp.run(transport="stdio")
-1022: 
-1023:     elif transport in ("sse", "streamable-http"):
-1024:         import uvicorn
-1025: 
-1026:         host = os.getenv("FASTMCP_HOST", "0.0.0.0")
-1027:         port = int(os.getenv("PORT", os.getenv("FASTMCP_PORT", "8000")))
-1028: 
-1029:         if transport == "sse":
-1030:             app = mcp.sse_app()
-1031:         else:
-1032:             app = mcp.streamable_http_app()
-1033: 
-1034:         # OAuth config for remote transports
-1035:         client_id = os.getenv("MCP_OAUTH_CLIENT_ID", "")
-1036:         client_secret = os.getenv("MCP_OAUTH_CLIENT_SECRET", "")
-1037:         access_token = os.getenv("MCP_AUTH_TOKEN")
-1038:         base_url = os.getenv("MCP_BASE_URL", f"http://localhost:{port}")
-1039: 
-1040:         if access_token:
-1041:             logger.info("OAuth authorization code flow enabled")
-1042:             app = OAuthAuthorizationMiddleware(
-1043:                 app,
-1044:                 client_id=client_id,
-1045:                 client_secret=client_secret,
-1046:                 access_token=access_token,
-1047:                 base_url=base_url,
-1048:             )
-1049:         else:
-1050:             logger.warning("No auth configured -- server is unauthenticated")
-1051: 
-1052:         logger.info("Starting %s transport on %s:%d", transport, host, port)
-1053:         config = uvicorn.Config(app, host=host, port=port, log_level="info")
-1054:         server = uvicorn.Server(config)
-1055:         server.run()
-1056: 
-1057:     else:
-1058:         raise ValueError(
-1059:             f"Unknown MCP_TRANSPORT: {transport!r}. "
-1060:             "Must be 'stdio', 'sse', or 'streamable-http'."
-1061:         )
-1062: 
-1063: 
-1064: if __name__ == "__main__":
-1065:     main()
+1018:         # Validate the approve secret (constant-time).
+1019:         if not approve_secret or not _safe_equal(approve_secret, self.approve_secret):
+1020:             e = self._auth_attempts.get(ip)
+1021:             if not e or now > e["reset_at"]:
+1022:                 self._auth_attempts[ip] = {"count": 1, "reset_at": now + AUTH_WINDOW_S}
+1023:             else:
+1024:                 e["count"] += 1
+1025:             html = self._render_approve_page(
+1026:                 client_id=client_id,
+1027:                 redirect_uri=redirect_uri,
+1028:                 code_challenge=code_challenge,
+1029:                 code_challenge_method=code_challenge_method,
+1030:                 state=state,
+1031:                 error="Incorrect secret. Try again.",
+1032:             )
+1033:             await HTMLResponse(html, status_code=403)(scope, receive, send)
+1034:             return
+1035: 
+1036:         # Success -- clear any failed-attempt record for this IP.
+1037:         self._auth_attempts.pop(ip, None)
+1038: 
+1039:         # Backstop cap on the pending-code store.
+1040:         if len(self._pending_codes) >= MAX_PENDING_CODES:
+1041:             self._cleanup_expired()
+1042:             if len(self._pending_codes) >= MAX_PENDING_CODES:
+1043:                 await JSONResponse(
+1044:                     {"error": "server_error",
+1045:                      "error_description": "Too many pending authorizations"},
+1046:                     status_code=503,
+1047:                 )(scope, receive, send)
+1048:                 return
+1049: 
+1050:         # Generate a one-time auth code with a creation timestamp (TTL enforced at /token).
+1051:         code = secrets.token_urlsafe(32)
+1052:         self._pending_codes[code] = {
+1053:             "code_challenge": code_challenge,
+1054:             "code_challenge_method": code_challenge_method or "S256",
+1055:             "redirect_uri": redirect_uri,
+1056:             "created_at": now,
+1057:         }
+1058: 
+1059:         # Redirect back to Claude.ai with the code
+1060:         callback_params = {"code": code}
+1061:         if state:
+1062:             callback_params["state"] = state
+1063:         separator = "&" if "?" in redirect_uri else "?"
+1064:         redirect_url = f"{redirect_uri}{separator}{urlencode(callback_params)}"
+1065: 
+1066:         response = RedirectResponse(url=redirect_url, status_code=302)
+1067:         await response(scope, receive, send)
+1068: 
+1069:     async def _handle_token(self, scope, receive, send):
+1070:         """Handle POST /token (authorization code exchange with PKCE)."""
+1071:         from starlette.responses import JSONResponse
+1072:         from urllib.parse import parse_qs
+1073:         import hashlib
+1074:         import base64
+1075: 
+1076:         try:
+1077:             body = await self._read_body(receive)
+1078:         except ValueError:
+1079:             from starlette.responses import Response
+1080: 
+1081:             await Response("Request body too large", status_code=413)(scope, receive, send)
+1082:             return
+1083:         try:
+1084:             params = parse_qs(body.decode("utf-8"))
+1085:         except Exception:
+1086:             response = JSONResponse({"error": "invalid_request"}, status_code=400)
+1087:             await response(scope, receive, send)
+1088:             return
+1089: 
+1090:         grant_type = params.get("grant_type", [None])[0]
+1091:         code = params.get("code", [None])[0]
+1092:         code_verifier = params.get("code_verifier", [None])[0]
+1093: 
+1094:         if grant_type != "authorization_code":
+1095:             response = JSONResponse(
+1096:                 {"error": "unsupported_grant_type"}, status_code=400
+1097:             )
+1098:             await response(scope, receive, send)
+1099:             return
+1100: 
+1101:         if not code or not code_verifier:
+1102:             response = JSONResponse({"error": "invalid_request"}, status_code=400)
+1103:             await response(scope, receive, send)
+1104:             return
+1105: 
+1106:         # Look up and consume the auth code (single-use)
+1107:         pending = self._pending_codes.pop(code, None)
+1108:         if pending is None:
+1109:             response = JSONResponse({"error": "invalid_grant"}, status_code=400)
+1110:             await response(scope, receive, send)
+1111:             return
+1112: 
+1113:         # Reject expired codes (TTL enforced here since codes are consumed on use).
+1114:         if time.monotonic() - pending.get("created_at", 0) > CODE_TTL_S:
+1115:             response = JSONResponse(
+1116:                 {"error": "invalid_grant", "error_description": "Code expired"},
+1117:                 status_code=400,
+1118:             )
+1119:             await response(scope, receive, send)
+1120:             return
+1121: 
+1122:         # Validate PKCE: S256(code_verifier) must match code_challenge
+1123:         code_challenge = pending["code_challenge"]
+1124:         digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+1125:         computed_challenge = (
+1126:             base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+1127:         )
+1128: 
+1129:         if computed_challenge != code_challenge:
+1130:             response = JSONResponse(
+1131:                 {
+1132:                     "error": "invalid_grant",
+1133:                     "error_description": "PKCE verification failed",
+1134:                 },
+1135:                 status_code=400,
+1136:             )
+1137:             await response(scope, receive, send)
+1138:             return
+1139: 
+1140:         # Issue access token
+1141:         response = JSONResponse(
+1142:             {
+1143:                 "access_token": self.access_token,
+1144:                 "token_type": "bearer",
+1145:                 "scope": "mcp",
+1146:             }
+1147:         )
+1148:         await response(scope, receive, send)
+1149: 
+1150:     @staticmethod
+1151:     async def _read_body(receive) -> bytes:
+1152:         """Read the full request body from ASGI receive, capped at MAX_BODY_BYTES."""
+1153:         body = b""
+1154:         while True:
+1155:             message = await receive()
+1156:             body += message.get("body", b"")
+1157:             if len(body) > MAX_BODY_BYTES:
+1158:                 raise ValueError("Request body too large")
+1159:             if not message.get("more_body", False):
+1160:                 break
+1161:         return body
+1162: 
+1163: 
+1164: # ------------------------------------------------------------------
+1165: # Entry point
+1166: # ------------------------------------------------------------------
+1167: 
+1168: 
+1169: def main():
+1170:     # Load .env for local development. No-op if the file is missing.
+1171:     # override=False keeps real environment variables (Docker, systemd,
+1172:     # MCP client `env` blocks, etc.) authoritative over .env.
+1173:     from dotenv import find_dotenv, load_dotenv
+1174: 
+1175:     dotenv_path = find_dotenv(usecwd=True)
+1176:     if dotenv_path and load_dotenv(dotenv_path, override=False):
+1177:         logger.info("Loaded .env from %s", dotenv_path)
+1178: 
+1179:     transport = os.getenv("MCP_TRANSPORT", "stdio")
+1180: 
+1181:     if transport == "stdio":
+1182:         mcp.run(transport="stdio")
+1183: 
+1184:     elif transport in ("sse", "streamable-http"):
+1185:         import uvicorn
+1186: 
+1187:         host = os.getenv("FASTMCP_HOST", "0.0.0.0")
+1188:         port = int(os.getenv("PORT", os.getenv("FASTMCP_PORT", "8000")))
+1189: 
+1190:         if transport == "sse":
+1191:             app = mcp.sse_app()
+1192:         else:
+1193:             app = mcp.streamable_http_app()
+1194: 
+1195:         # OAuth config for remote transports
+1196:         client_id = os.getenv("MCP_OAUTH_CLIENT_ID", "")
+1197:         client_secret = os.getenv("MCP_OAUTH_CLIENT_SECRET", "")
+1198:         access_token = os.getenv("MCP_AUTH_TOKEN")
+1199:         approve_secret = os.getenv("MCP_APPROVE_SECRET")
+1200:         base_url = os.getenv("MCP_BASE_URL", f"http://localhost:{port}")
+1201: 
+1202:         # Fail closed: a public remote transport must be authenticated. Refuse to
+1203:         # start rather than silently serving every tool unauthenticated.
+1204:         if not access_token or not approve_secret:
+1205:             raise RuntimeError(
+1206:                 "Remote transport requires MCP_AUTH_TOKEN and MCP_APPROVE_SECRET. "
+1207:                 "Refusing to start unauthenticated."
+1208:             )
+1209:         if len(approve_secret) < 16:
+1210:             raise RuntimeError(
+1211:                 "MCP_APPROVE_SECRET too short (min 16 chars). Generate: openssl rand -hex 32"
+1212:             )
+1213:         if not base_url.startswith("https://"):
+1214:             logger.warning(
+1215:                 "MCP_BASE_URL is not HTTPS (%s). OAuth metadata will advertise "
+1216:                 "insecure endpoints. Set MCP_BASE_URL to your public HTTPS URL "
+1217:                 "for production.",
+1218:                 base_url,
+1219:             )
+1220: 
+1221:         logger.info("OAuth authorization code flow enabled")
+1222:         app = OAuthAuthorizationMiddleware(
+1223:             app,
+1224:             client_id=client_id,
+1225:             client_secret=client_secret,
+1226:             access_token=access_token,
+1227:             approve_secret=approve_secret,
+1228:             base_url=base_url,
+1229:         )
+1230: 
+1231:         logger.info("Starting %s transport on %s:%d", transport, host, port)
+1232:         config = uvicorn.Config(app, host=host, port=port, log_level="info")
+1233:         server = uvicorn.Server(config)
+1234:         server.run()
+1235: 
+1236:     else:
+1237:         raise ValueError(
+1238:             f"Unknown MCP_TRANSPORT: {transport!r}. "
+1239:             "Must be 'stdio', 'sse', or 'streamable-http'."
+1240:         )
+1241: 
+1242: 
+1243: if __name__ == "__main__":
+1244:     main()
 </file>
 
 <file path="README.md">
@@ -2782,102 +3426,112 @@ This section contains the contents of the repository's files.
 126: | `CRONOMETER_USERNAME` | Yes | Cronometer account email |
 127: | `CRONOMETER_PASSWORD` | Yes | Cronometer account password |
 128: | `MCP_TRANSPORT` | No | Transport mode: `stdio` (default), `sse`, or `streamable-http` |
-129: | `MCP_AUTH_TOKEN` | No | Bearer token for remote auth (enables OAuth flow) |
-130: | `MCP_OAUTH_CLIENT_ID` | No | OAuth client ID for remote clients |
-131: | `MCP_OAUTH_CLIENT_SECRET` | No | OAuth client secret for remote clients |
-132: | `MCP_BASE_URL` | No | Public base URL for OAuth metadata endpoints |
-133: | `PORT` | No | Listen port for remote transports (default 8000) |
-134: 
-135: ### Dokku / Heroku Deployment
-136: 
-137: The project includes a `Procfile` and `.python-version` for direct deployment with the Heroku Python buildpack:
-138: 
-139: ```bash
-140: # Create app
-141: dokku apps:create cronometer-api-mcp
-142: 
-143: # Set environment
-144: dokku config:set cronometer-api-mcp \
-145:   MCP_TRANSPORT=streamable-http \
-146:   MCP_AUTH_TOKEN=$(openssl rand -hex 32) \
-147:   MCP_OAUTH_CLIENT_ID=my-client \
-148:   MCP_OAUTH_CLIENT_SECRET=$(openssl rand -hex 32) \
-149:   MCP_BASE_URL=https://your-domain.com \
-150:   CRONOMETER_USERNAME=your@email.com \
-151:   CRONOMETER_PASSWORD=your-password
-152: 
-153: # Deploy
-154: git push dokku main
-155: ```
+129: | `MCP_AUTH_TOKEN` | Remote | Bearer token gating the MCP endpoint (header only). **Required** for `sse`/`streamable-http`. |
+130: | `MCP_APPROVE_SECRET` | Remote | Secret entered once in the browser approve page. **Required** for `sse`/`streamable-http` (min 16 chars). Keep distinct from `MCP_AUTH_TOKEN`. |
+131: | `MCP_OAUTH_CLIENT_ID` | No | OAuth client ID for remote clients |
+132: | `MCP_OAUTH_CLIENT_SECRET` | No | OAuth client secret for remote clients |
+133: | `MCP_BASE_URL` | No | Public base URL for OAuth metadata endpoints (should be `https://`) |
+134: | `PORT` | No | Listen port for remote transports (default 8000) |
+135: 
+136: > **Remote transports fail closed.** When `MCP_TRANSPORT` is `sse` or `streamable-http`, the server refuses to start unless both `MCP_AUTH_TOKEN` and `MCP_APPROVE_SECRET` are set. The approve page is gated by `MCP_APPROVE_SECRET` (with per-IP rate limiting and a 5-minute auth-code TTL) so the OAuth flow cannot be used by an anonymous caller to mint the bearer token.
+137: 
+138: ### Dokku / Heroku Deployment
+139: 
+140: The project includes a `Procfile` and `.python-version` for direct deployment with the Heroku Python buildpack:
+141: 
+142: ```bash
+143: # Create app
+144: dokku apps:create cronometer-api-mcp
+145: 
+146: # Set environment
+147: dokku config:set cronometer-api-mcp \
+148:   MCP_TRANSPORT=streamable-http \
+149:   MCP_AUTH_TOKEN=$(openssl rand -hex 32) \
+150:   MCP_APPROVE_SECRET=$(openssl rand -hex 32) \
+151:   MCP_OAUTH_CLIENT_ID=my-client \
+152:   MCP_OAUTH_CLIENT_SECRET=$(openssl rand -hex 32) \
+153:   MCP_BASE_URL=https://your-domain.com \
+154:   CRONOMETER_USERNAME=your@email.com \
+155:   CRONOMETER_PASSWORD=your-password
 156: 
-157: ### Claude.ai Remote Connection
-158: 
-159: When deployed remotely with OAuth configured, connect from Claude.ai using:
+157: # Deploy
+158: git push dokku main
+159: ```
 160: 
-161: - **Server URL**: `https://your-domain.com/mcp`
-162: - **OAuth Client ID**: Value of `MCP_OAUTH_CLIENT_ID`
-163: - **OAuth Client Secret**: Value of `MCP_OAUTH_CLIENT_SECRET`
+161: ### Claude.ai Remote Connection
+162: 
+163: When deployed remotely with OAuth configured, connect from Claude.ai using:
 164: 
-165: Claude.ai will open a browser tab for authorization. Click **Authorize** to complete the connection.
-166: 
-167: ## Development
+165: - **Server URL**: `https://your-domain.com/mcp`
+166: - **OAuth Client ID**: Value of `MCP_OAUTH_CLIENT_ID`
+167: - **OAuth Client Secret**: Value of `MCP_OAUTH_CLIENT_SECRET`
 168: 
-169: For local development, copy `.env.example` to `.env` and fill in your credentials:
+169: Claude.ai will open a browser tab for authorization. The page prompts for the **access secret** -- enter the value of `MCP_APPROVE_SECRET` to complete the connection. You do this once on first connect (and again on any later re-auth).
 170: 
-171: ```bash
-172: cp .env.example .env
-173: # edit .env
-174: uv run cronometer-api-mcp
-175: ```
+171: ### ⚠️ Docker security
+172: 
+173: The published Docker image wraps the server with supergateway in **stdio** mode. In stdio mode the OAuth approve-secret gate is **not** applied -- the image exposes every tool with no authentication. Do **not** expose the Docker container directly to the public internet.
+174: 
+175: For authenticated remote access, deploy using the native transport (`MCP_TRANSPORT=streamable-http` with `MCP_AUTH_TOKEN` and `MCP_APPROVE_SECRET` set), which engages the built-in OAuth gate. If you must run the Docker image with public exposure, place it behind an authenticating reverse proxy (Caddy basicauth, Cloudflare Access, Tailscale, etc.).
 176: 
-177: The CLI auto-loads `.env` on startup (dev convenience only). Real environment variables always win over `.env`, so production deployments and MCP client `env` blocks are unaffected.
+177: ## Development
 178: 
-179: ## How It Works
+179: For local development, copy `.env.example` to `.env` and fill in your credentials:
 180: 
-181: This server communicates with `mobile.cronometer.com` -- the same REST API used by the Cronometer Android/Flutter app. The API was reverse-engineered through:
-182: 
-183: 1. Static analysis of `libapp.so` (Dart AOT snapshot) from the APK to discover endpoint names
-184: 2. Traffic interception via Frida + mitmproxy to capture exact request/response formats
-185: 3. Trial-and-error against the live API to confirm payload shapes
+181: ```bash
+182: cp .env.example .env
+183: # edit .env
+184: uv run cronometer-api-mcp
+185: ```
 186: 
-187: The API uses two protocols:
+187: The CLI auto-loads `.env` on startup (dev convenience only). Real environment variables always win over `.env`, so production deployments and MCP client `env` blocks are unaffected.
 188: 
-189: - **v2 (`POST /api/v2/*`)** -- JSON-body auth, used for most operations (food search, diary read/write, nutrition, fasting, macros)
-190: - **v3 (`DELETE /api/v3/user/{id}/*`)** -- Header-based auth (`x-crono-session`), used for diary entry deletion
-191: 
-192: ## Python API
-193: 
-194: You can use the client directly:
-195: 
-196: ```python
-197: from cronometer_api_mcp.client import CronometerClient
-198: from datetime import date
-199: 
-200: client = CronometerClient()
+189: ## How It Works
+190: 
+191: This server communicates with `mobile.cronometer.com` -- the same REST API used by the Cronometer Android/Flutter app. The API was reverse-engineered through:
+192: 
+193: 1. Static analysis of `libapp.so` (Dart AOT snapshot) from the APK to discover endpoint names
+194: 2. Traffic interception via Frida + mitmproxy to capture exact request/response formats
+195: 3. Trial-and-error against the live API to confirm payload shapes
+196: 
+197: The API uses two protocols:
+198: 
+199: - **v2 (`POST /api/v2/*`)** -- JSON-body auth, used for most operations (food search, diary read/write, nutrition, fasting, macros)
+200: - **v3 (`DELETE /api/v3/user/{id}/*`)** -- Header-based auth (`x-crono-session`), used for diary entry deletion
 201: 
-202: # Search for foods
-203: results = client.search_food("chicken breast")
-204: 
-205: # Get food details
-206: food = client.get_food(results[0]["id"])
-207: 
-208: # Log a serving
-209: client.add_serving(
-210:     food_id=food["id"],
-211:     measure_id=food["defaultMeasureId"],
-212:     grams=200,
-213: )
+202: ## Python API
+203: 
+204: You can use the client directly:
+205: 
+206: ```python
+207: from cronometer_api_mcp.client import CronometerClient
+208: from datetime import date
+209: 
+210: client = CronometerClient()
+211: 
+212: # Search for foods
+213: results = client.search_food("chicken breast")
 214: 
-215: # Get today's diary
-216: diary = client.get_diary()
+215: # Get food details
+216: food = client.get_food(results[0]["id"])
 217: 
-218: # Get nutrition scores
-219: scores = client.get_nutrition_scores()
-220: ```
-221: 
-222: ## License
-223: 
-224: MIT
+218: # Log a serving
+219: client.add_serving(
+220:     food_id=food["id"],
+221:     measure_id=food["defaultMeasureId"],
+222:     grams=200,
+223: )
+224: 
+225: # Get today's diary
+226: diary = client.get_diary()
+227: 
+228: # Get nutrition scores
+229: scores = client.get_nutrition_scores()
+230: ```
+231: 
+232: ## License
+233: 
+234: MIT
 </file>
 
 </files>
