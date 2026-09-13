@@ -12,7 +12,7 @@ from html import escape as _html_escape
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
-from .client import CronometerClient
+from .client import CronometerClient, CronometerError, _confirmed_serving_id
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -213,8 +213,16 @@ def add_food_entry(
             day=day,
             diary_group=group_int,
         )
+        serving_id = _confirmed_serving_id(result)
+        if serving_id is None:
+            return _err(
+                CronometerError(
+                    "Cronometer returned no serving id; entry was NOT confirmed as logged."
+                )
+            )
         return _ok(
             {
+                "serving_id": serving_id,
                 "entry": result,
                 "note": "Use the serving ID to remove this entry with remove_food_entry.",
             }

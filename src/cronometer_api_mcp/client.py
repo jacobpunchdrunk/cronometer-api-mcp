@@ -388,9 +388,15 @@ class CronometerClient:
                          1 = Breakfast, 2 = Lunch, 3 = Dinner, 4 = Snacks.
 
         Returns the serving confirmation dict from the API.
+
+        Raises:
+            CronometerError: If the serving is not confirmed after one re-login,
+                or if a retry can't be proven safe (possible duplicate).
         """
         _tz = ZoneInfo(os.getenv("CRONOMETER_TIMEZONE", "UTC"))
         now = datetime.now(tz=_tz)
+        # Resolve once so the write, the diary check, and any retry share a date
+        day = day or self._local_today()
         day_str = self._format_day(day)
         time_str = f"{now.hour}:{now.minute}:{now.second}"
 
@@ -418,14 +424,62 @@ class CronometerClient:
         }
 
         data = self._request("/api/v2/add_serving", payload)
+
+        # HTTP 200 with no serving id: a stale session Cronometer didn't reject.
+        # Re-login, prove nothing was written, then retry exactly once.
+        if _confirmed_serving_id(data) is None:
+            logger.warning("add_serving not confirmed, re-authenticating: %s", data)
+            self._token = None
+            self.login()
+            self._verify_serving_absent(day, food_id, grams)
+            serving["userId"] = self._user_id
+            data = self._request("/api/v2/add_serving", payload)
+            if _confirmed_serving_id(data) is None:
+                raise CronometerError(
+                    f"add_serving not confirmed after re-login: {data}"
+                )
+
         logger.info(
             "Logged serving: food_id=%d, grams=%.1f, day=%s (serving_id=%s)",
             food_id,
             grams,
             day_str,
-            data.get("id"),
+            _confirmed_serving_id(data),
         )
         return data
+
+    def _verify_serving_absent(self, day: date, food_id: int, grams: float) -> None:
+        """Prove an unconfirmed add_serving did not create a diary entry.
+
+        Called after re-login, so the diary is read with a fresh session.
+        Returns only when no matching serving exists; raises CronometerError
+        when a match exists or the diary can't be checked, so a
+        non-idempotent retry never risks a duplicate entry.
+        """
+        entries = self.get_diary(day).get("diary")
+        if not isinstance(entries, list):
+            raise CronometerError(
+                "Cronometer did not confirm this entry and the diary could not be "
+                "verified, so it was not retried. Check the diary and retry if missing."
+            )
+
+        for entry in entries:
+            if entry.get("type") != "Serving":
+                continue
+            if entry.get("foodId") is None or entry.get("grams") is None:
+                raise CronometerError(
+                    "Cronometer did not confirm this entry and the diary format could "
+                    "not be verified, so it was not retried. Check the diary and retry "
+                    "if missing."
+                )
+            if entry["foodId"] == food_id and abs(float(entry["grams"]) - grams) < 0.01:
+                raise CronometerError(
+                    "Possible duplicate detected: Cronometer did not confirm this entry, "
+                    f"and an entry for the same food and grams (servingId="
+                    f"{entry.get('servingId')}) already exists on {self._format_day(day)}. "
+                    "It was not retried. Check the diary (get_food_log or the Cronometer "
+                    "app) and retry if it's missing."
+                )
 
     # ------------------------------------------------------------------
     # Diary: get diary entries
@@ -692,6 +746,22 @@ class CronometerClient:
 # ======================================================================
 # Helpers
 # ======================================================================
+
+
+def _confirmed_serving_id(data: dict) -> int | str | None:
+    """Return the serving id from an add_serving response, or None if unconfirmed.
+
+    A live session returns a top-level "id" plus servings[].servingId.
+    A dead session returns HTTP 200 with neither.
+    """
+    if not isinstance(data, dict):
+        return None
+    servings = data.get("servings")
+    if isinstance(servings, list):
+        for s in servings:
+            if isinstance(s, dict) and s.get("servingId"):
+                return s["servingId"]
+    return data.get("id") or None
 
 
 def _meal_group_for_hour(hour: int) -> int:
