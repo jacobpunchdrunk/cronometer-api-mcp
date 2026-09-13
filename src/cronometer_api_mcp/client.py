@@ -253,7 +253,6 @@ class CronometerClient:
             },
         }
         data = self._request("/api/v2/find_food", payload)
-        logger.info("find_food RAW response: %r", data)
         foods = data.get("foods", [])
         logger.info("Food search for %r returned %d results", query, len(foods))
         return foods
@@ -419,8 +418,6 @@ class CronometerClient:
         }
 
         data = self._request("/api/v2/add_serving", payload)
-        logger.info("add_serving serving sent: %r", payload["serving"])
-        logger.info("add_serving RAW response: %r", data)
         logger.info(
             "Logged serving: food_id=%d, grams=%.1f, day=%s (serving_id=%s)",
             food_id,
