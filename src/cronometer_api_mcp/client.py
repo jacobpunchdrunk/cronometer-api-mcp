@@ -11,6 +11,7 @@ endpoints.
 
 import logging
 import os
+import time
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://mobile.cronometer.com"
+
+# Cronometer can kill a session while still answering HTTP 200, so re-login
+# proactively instead of waiting for a 401 that may never come.
+SESSION_MAX_AGE_S = 30 * 60
 
 # Auth block sent with every request (mimics the Android app)
 _APP_AUTH_TEMPLATE = {
@@ -56,6 +61,7 @@ class CronometerClient:
     def __init__(self) -> None:
         self._user_id: int | None = None
         self._token: str | None = None
+        self._logged_in_at = 0.0
         self._http = httpx.Client(
             base_url=BASE_URL,
             headers={
@@ -106,6 +112,11 @@ class CronometerClient:
 
         logger.info("Logging in to Cronometer as %s", username)
         resp = self._http.post("/api/v2/login", json=payload)
+        if resp.status_code in (401, 403):
+            raise CronometerError(
+                f"Cronometer login rejected (HTTP {resp.status_code}). "
+                "Check CRONOMETER_USERNAME and CRONOMETER_PASSWORD."
+            )
         resp.raise_for_status()
         data = resp.json()
 
@@ -114,6 +125,7 @@ class CronometerClient:
 
         self._user_id = data["id"]
         self._token = data["sessionKey"]
+        self._logged_in_at = time.monotonic()
         logger.info(
             "Cronometer login successful (userId=%d, token_len=%d)",
             self._user_id,
@@ -121,9 +133,20 @@ class CronometerClient:
         )
 
     def _ensure_auth(self) -> None:
-        """Login lazily on first use."""
+        """Login lazily on first use, and again once the session is too old."""
         if self._token is None:
             self.login()
+        elif time.monotonic() - self._logged_in_at > SESSION_MAX_AGE_S:
+            logger.info(
+                "Cronometer session older than %ds, re-authenticating",
+                SESSION_MAX_AGE_S,
+            )
+            self.login()
+
+    def _relogin(self) -> None:
+        """Drop the current session and log in again."""
+        self._token = None
+        self.login()
 
     def _auth_block(self) -> dict:
         return {
@@ -136,8 +159,20 @@ class CronometerClient:
     # Request helpers
     # ------------------------------------------------------------------
 
-    def _request(self, endpoint: str, payload: dict, *, _retried: bool = False) -> dict:
-        """Send a v2 POST request with JSON auth block. Re-authenticates once on failure."""
+    def _request(
+        self,
+        endpoint: str,
+        payload: dict,
+        *,
+        expect: str | None = None,
+        _retried: bool = False,
+    ) -> dict:
+        """Send a v2 POST request with JSON auth block. Re-authenticates once on failure.
+
+        expect: a key every live response contains. Its absence on HTTP 200 is
+        treated as a dead session: re-login and retry once. Only pass it for
+        reads, since retrying a write could duplicate it.
+        """
         self._ensure_auth()
 
         payload["auth"] = self._auth_block()
@@ -152,9 +187,8 @@ class CronometerClient:
                 "Cronometer auth rejected (%d), re-authenticating",
                 resp.status_code,
             )
-            self._token = None
-            self.login()
-            return self._request(endpoint, payload, _retried=True)
+            self._relogin()
+            return self._request(endpoint, payload, expect=expect, _retried=True)
 
         resp.raise_for_status()
         data = resp.json()
@@ -163,10 +197,19 @@ class CronometerClient:
         if isinstance(data, dict) and data.get("result") == "FAILURE":
             if not _retried:
                 logger.warning("Cronometer request failed, re-authenticating: %s", data)
-                self._token = None
-                self.login()
-                return self._request(endpoint, payload, _retried=True)
+                self._relogin()
+                return self._request(endpoint, payload, expect=expect, _retried=True)
             raise CronometerError(f"Cronometer API error: {data}")
+
+        # HTTP 200 without the expected key: a stale session Cronometer didn't reject.
+        # A second miss after a fresh login is returned as-is, since it may be a
+        # legitimately sparse response.
+        if expect and isinstance(data, dict) and expect not in data and not _retried:
+            logger.warning(
+                "Cronometer %s response missing %r, re-authenticating", endpoint, expect
+            )
+            self._relogin()
+            return self._request(endpoint, payload, expect=expect, _retried=True)
 
         return data
 
@@ -210,8 +253,7 @@ class CronometerClient:
                 "Cronometer v3 auth rejected (%d), re-authenticating",
                 resp.status_code,
             )
-            self._token = None
-            self.login()
+            self._relogin()
             return self._request_v3(method, path, json_body=json_body, _retried=True)
 
         return resp
@@ -252,7 +294,7 @@ class CronometerClient:
                 "call_version": 1,
             },
         }
-        data = self._request("/api/v2/find_food", payload)
+        data = self._request("/api/v2/find_food", payload, expect="foods")
         foods = data.get("foods", [])
         logger.info("Food search for %r returned %d results", query, len(foods))
         return foods
@@ -268,7 +310,7 @@ class CronometerClient:
         defaultMeasureId, nutrients, etc.
         """
         payload = {"id": food_id, "config": {"call_version": 1}}
-        data = self._request("/api/v2/get_food", payload)
+        data = self._request("/api/v2/get_food", payload, expect="id")
         logger.info(
             "Fetched food %d: %r (defaultMeasureId=%s)",
             food_id,
@@ -355,7 +397,13 @@ class CronometerClient:
         data = self._request("/api/v2/add_food", payload)
         food_id = data.get("id")
         if not food_id:
-            raise CronometerError(f"Failed to create custom food: {data}")
+            # Likely a stale session. Re-login so the next call works, but don't
+            # retry: the first attempt may have created the food.
+            self._relogin()
+            raise CronometerError(
+                "Cronometer did not confirm the custom food, so it was not retried. "
+                f"Search for it before trying again. Response: {data}"
+            )
 
         logger.info("Created custom food %r (id=%d)", name, food_id)
         return {"food_id": food_id, "measure_id": None}
@@ -429,8 +477,7 @@ class CronometerClient:
         # Re-login, prove nothing was written, then retry exactly once.
         if _confirmed_serving_id(data) is None:
             logger.warning("add_serving not confirmed, re-authenticating: %s", data)
-            self._token = None
-            self.login()
+            self._relogin()
             self._verify_serving_absent(day, food_id, grams)
             serving["userId"] = self._user_id
             data = self._request("/api/v2/add_serving", payload)
@@ -497,7 +544,7 @@ class CronometerClient:
             "day": self._format_day(day),
             "config": {"call_version": 1},
         }
-        data = self._request("/api/v2/get_diary", payload)
+        data = self._request("/api/v2/get_diary", payload, expect="diary")
         logger.info("Fetched diary for %s", self._format_day(day))
         return data
 
