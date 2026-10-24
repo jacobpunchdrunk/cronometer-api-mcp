@@ -7,3 +7,8 @@ dist/
 build/
 .ruff_cache/
 .claude/
+
+# Wrangler
+worker/node_modules/
+worker/.wrangler/
+worker/.dev.vars

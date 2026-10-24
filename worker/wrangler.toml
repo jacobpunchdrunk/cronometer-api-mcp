@@ -1,0 +1,35 @@
+# Cloudflare Worker + Container for the Cronometer MCP. No secrets here.
+# Secrets (CRONOMETER_USERNAME, CRONOMETER_PASSWORD, MCP_AUTH_TOKEN,
+# MCP_APPROVE_SECRET) come from Doppler project cronometer-api-mcp, config prd,
+# via the copy command in DEPLOY.md.
+
+name = "cronometer-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[dev]
+port = 8787
+
+[observability]
+enabled = true
+
+[vars]
+MCP_BASE_URL = "https://cronometer-mcp.punchdrunk.workers.dev"
+CRONOMETER_TIMEZONE = "America/Los_Angeles"
+
+[[containers]]
+class_name = "CronometerContainer"
+image = "../deploy/cf.Dockerfile"
+image_build_context = ".."
+instance_type = "basic"
+max_instances = 1
+
+[[durable_objects.bindings]]
+name = "MCP_CONTAINER"
+class_name = "CronometerContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CronometerContainer"]
