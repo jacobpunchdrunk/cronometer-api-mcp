@@ -19,7 +19,7 @@ enabled = true
 MCP_BASE_URL = "https://cronometer-mcp.punchdrunk.workers.dev"
 CRONOMETER_TIMEZONE = "America/Los_Angeles"
 # Bump after changing secrets so a fresh container starts with them.
-CONTAINER_GENERATION = "2"
+CONTAINER_GENERATION = "3"
 
 [[containers]]
 class_name = "CronometerContainer"
