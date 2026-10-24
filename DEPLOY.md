@@ -28,7 +28,7 @@ npx wrangler deploy
 
 ## Secrets
 
-Doppler project `cronometer-mcp`, config `prd` (deployed) and `dev` (local).
+Doppler project `pd-mcps`, config `prd_cronometer` (deployed) and `dev` (local).
 
 | Name                  | What it is                                                       |
 | --------------------- | ---------------------------------------------------------------- |
@@ -42,7 +42,7 @@ Doppler has no native sync to Workers, so copy with one command (prints names on
 after any change in Doppler `prd`:
 
 ```sh
-doppler secrets download --project cronometer-mcp --config prd --no-file --format json \
+doppler secrets download --project pd-mcps --config prd_cronometer --no-file --format json \
   | jq -c '{CRONOMETER_USERNAME, CRONOMETER_PASSWORD, MCP_AUTH_TOKEN, MCP_APPROVE_SECRET, MCP_OAUTH_CLIENT_ID}' \
   | (cd worker && npx wrangler secret bulk)
 ```

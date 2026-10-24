@@ -1,6 +1,6 @@
 # Cloudflare Worker + Container for the Cronometer MCP. No secrets here.
 # Secrets (CRONOMETER_USERNAME, CRONOMETER_PASSWORD, MCP_AUTH_TOKEN,
-# MCP_APPROVE_SECRET) come from Doppler project cronometer-mcp, config prd,
+# MCP_APPROVE_SECRET) come from Doppler project pd-mcps (config prd_cronometer), config prd,
 # via the copy command in DEPLOY.md.
 
 name = "cronometer-mcp"
