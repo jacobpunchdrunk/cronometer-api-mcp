@@ -36,18 +36,19 @@ Doppler project `cronometer-mcp`, config `prd` (deployed) and `dev` (local).
 | `CRONOMETER_PASSWORD` | Cronometer password                                              |
 | `MCP_AUTH_TOKEN`      | Bearer token the server issues to claude.ai. `openssl rand -hex 32` |
 | `MCP_APPROVE_SECRET`  | Typed once on the approve page when connecting. Distinct from the token, min 16 chars |
+| `MCP_OAUTH_CLIENT_ID` | Client ID returned by `/register`. Any non-empty value, e.g. `cronometer-` + `openssl rand -hex 8` |
 
 Doppler has no native sync to Workers, so copy with one command (prints names only). Re-run it
 after any change in Doppler `prd`:
 
 ```sh
 doppler secrets download --project cronometer-mcp --config prd --no-file --format json \
-  | jq -c '{CRONOMETER_USERNAME, CRONOMETER_PASSWORD, MCP_AUTH_TOKEN, MCP_APPROVE_SECRET}' \
+  | jq -c '{CRONOMETER_USERNAME, CRONOMETER_PASSWORD, MCP_AUTH_TOKEN, MCP_APPROVE_SECRET, MCP_OAUTH_CLIENT_ID}' \
   | (cd worker && npx wrangler secret bulk)
 ```
 
-The container reads secrets when it starts. After changing one, make it restart: redeploy, or
-wait for it to sleep.
+The container reads secrets only when it starts. After changing one, bump `CONTAINER_GENERATION`
+in `worker/wrangler.toml` and deploy; a fresh instance starts with the new values.
 
 Rotating `MCP_AUTH_TOKEN` logs claude.ai out; reconnect the connector and enter the approve secret.
 

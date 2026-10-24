@@ -18,13 +18,16 @@ enabled = true
 [vars]
 MCP_BASE_URL = "https://cronometer-mcp.punchdrunk.workers.dev"
 CRONOMETER_TIMEZONE = "America/Los_Angeles"
+# Bump after changing secrets so a fresh container starts with them.
+CONTAINER_GENERATION = "2"
 
 [[containers]]
 class_name = "CronometerContainer"
 image = "../deploy/cf.Dockerfile"
 image_build_context = ".."
 instance_type = "basic"
-max_instances = 1
+# 2 so a CONTAINER_GENERATION bump can start while the old instance sleeps out.
+max_instances = 2
 
 [[durable_objects.bindings]]
 name = "MCP_CONTAINER"
